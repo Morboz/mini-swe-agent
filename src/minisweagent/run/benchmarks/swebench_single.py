@@ -12,6 +12,7 @@ from minisweagent.models import get_model
 from minisweagent.run.benchmarks.swebench import (
     DATASET_MAPPING,
     get_sb_environment,
+    load_swebench_dataset,
 )
 from minisweagent.utils.log import logger
 from minisweagent.utils.serialize import UNSET, recursive_merge
@@ -58,10 +59,7 @@ def main(
     """Run on a single SWE-Bench instance."""
     dataset_path = DATASET_MAPPING.get(subset, subset)
     logger.info(f"Loading dataset from {dataset_path}, split {split}...")
-    instances = {
-        inst["instance_id"]: inst  # type: ignore
-        for inst in load_dataset(dataset_path, split=split)
-    }
+    instances = {inst["instance_id"]: inst for inst in load_swebench_dataset(dataset_path, split=split)}  # type: ignore
     if instance_spec.isnumeric():
         instance_spec = sorted(instances.keys())[int(instance_spec)]
     instance: dict = instances[instance_spec]  # type: ignore

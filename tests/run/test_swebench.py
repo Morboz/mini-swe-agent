@@ -10,6 +10,7 @@ from minisweagent.models.test_models import DeterministicModel, make_output
 from minisweagent.run.benchmarks.swebench import (
     filter_instances,
     get_swebench_docker_image_name,
+    load_swebench_dataset,
     main,
     process_instance,
     remove_from_preds_file,
@@ -102,6 +103,26 @@ def test_get_image_name_with_complex_instance_id():
     instance = {"instance_id": "project__sub__module__version__1.2.3"}
     expected = "docker.io/swebench/sweb.eval.x86_64.project_1776_sub_1776_module_1776_version_1776_1.2.3:latest"
     assert get_swebench_docker_image_name(instance) == expected
+
+
+def test_load_swebench_dataset_uses_json_loader_for_jsonl_file():
+    """Test that JSONL files are loaded via the datasets JSON builder."""
+    dataset_path = "/tmp/custom-swebench.jsonl"
+
+    with patch("minisweagent.run.benchmarks.swebench.load_dataset") as mock_load_dataset:
+        load_swebench_dataset(dataset_path, split="train")
+
+    mock_load_dataset.assert_called_once_with("json", data_files=dataset_path, split="train")
+
+
+def test_load_swebench_dataset_uses_path_loader_for_named_dataset():
+    """Test that normal dataset names keep the old loading behavior."""
+    dataset_path = "princeton-nlp/SWE-Bench_Lite"
+
+    with patch("minisweagent.run.benchmarks.swebench.load_dataset") as mock_load_dataset:
+        load_swebench_dataset(dataset_path, split="dev")
+
+    mock_load_dataset.assert_called_once_with(dataset_path, split="dev")
 
 
 def test_filter_instances_no_filters():

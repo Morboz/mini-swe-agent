@@ -101,3 +101,39 @@ def test_swebench_single_end_to_end_exit_immediately(github_test_data, tmp_path,
         # Verify model was called with correct parameters
         mock_get_model.assert_called_once()
         assert output_path.exists()
+
+
+def test_swebench_single_uses_json_loader_for_jsonl_subset(tmp_path):
+    """Test that swebench_single accepts a JSONL dataset path."""
+    dataset_path = tmp_path / "custom.jsonl"
+    dataset_path.write_text('{"instance_id":"demo__repo-1","problem_statement":"Fix it"}\n')
+
+    with (
+        patch("minisweagent.run.benchmarks.swebench_single.load_swebench_dataset") as mock_load_dataset,
+        patch("minisweagent.run.benchmarks.swebench_single.get_sb_environment") as mock_get_env,
+        patch("minisweagent.run.benchmarks.swebench_single.get_model") as mock_get_model,
+        patch("minisweagent.run.benchmarks.swebench_single.get_agent") as mock_get_agent,
+    ):
+        mock_load_dataset.return_value = [{"instance_id": "demo__repo-1", "problem_statement": "Fix it"}]
+        mock_agent = mock_get_agent.return_value
+
+        main(
+            subset=str(dataset_path),
+            split="train",
+            instance_spec="demo__repo-1",
+            model_name="deterministic",
+            config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
+            environment_class="docker",
+            exit_immediately=True,
+            output=tmp_path / "traj.json",
+            model_class=None,
+            agent_class=None,
+            yolo=False,
+            cost_limit=None,
+        )
+
+        mock_load_dataset.assert_called_once_with(str(dataset_path), split="train")
+        mock_get_env.assert_called_once()
+        mock_get_model.assert_called_once()
+        mock_get_agent.assert_called_once()
+        mock_agent.run.assert_called_once_with("Fix it", instance_id="demo__repo-1")

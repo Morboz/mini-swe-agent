@@ -13,6 +13,7 @@ import traceback
 from pathlib import Path
 
 import typer
+from datasets import load_dataset
 from jinja2 import StrictUndefined, Template
 from rich.live import Live
 
@@ -106,6 +107,13 @@ def get_sb_environment(config: dict, instance: dict) -> Environment:
         if out["returncode"] != 0:
             raise RuntimeError(f"Error executing startup command: {out}")
     return env
+
+
+def load_swebench_dataset(dataset_path: str, *, split: str):
+    """Load a SWEBench dataset from HF Hub, a dataset directory, or a JSON/JSONL file."""
+    if dataset_path.endswith((".json", ".jsonl")):
+        return load_dataset("json", data_files=dataset_path, split=split)
+    return load_dataset(dataset_path, split=split)
 
 
 def update_preds_file(output_path: Path, instance_id: str, model_name: str, result: str):
@@ -234,11 +242,9 @@ def main(
     logger.info(f"Results will be saved to {output_path}")
     add_file_handler(output_path / "minisweagent.log")
 
-    from datasets import load_dataset
-
     dataset_path = DATASET_MAPPING.get(subset, subset)
     logger.info(f"Loading dataset {dataset_path}, split {split}...")
-    instances = list(load_dataset(dataset_path, split=split))
+    instances = list(load_swebench_dataset(dataset_path, split=split))
 
     instances = filter_instances(instances, filter_spec=filter_spec, slice_spec=slice_spec, shuffle=shuffle)
     if not redo_existing and (output_path / "preds.json").exists():
