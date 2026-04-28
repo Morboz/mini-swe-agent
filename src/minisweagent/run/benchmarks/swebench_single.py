@@ -7,6 +7,7 @@ from datasets import load_dataset
 
 from minisweagent import global_config_dir
 from minisweagent.agents import get_agent
+from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
 from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.models import get_model
 from minisweagent.run.benchmarks.swebench import (
@@ -37,6 +38,19 @@ Examples:
 
 [bold green]-c swebench.yaml -c agent.mode=yolo[/bold green]
 """
+
+
+class SingleCaseProgressTrackingAgent(MemoryBootstrapAgent):
+    """Single-case agent wrapper that logs step progress to the console."""
+
+    def step(self) -> dict:
+        logger.info(f"Step {self.n_calls + 1:3d} (${self.cost:.2f})")
+        return super().step()
+
+    def _bootstrap_memory(self) -> None:
+        logger.info("Bootstrapping memory...")
+        super()._bootstrap_memory()
+        logger.info("Memory bootstrap finished")
 
 
 # fmt: off
@@ -85,12 +99,29 @@ def main(
     config = recursive_merge(*configs)
 
     env = get_sb_environment(config, instance)
-    agent = get_agent(
-        get_model(config=config.get("model", {})),
-        env,
-        config.get("agent", {}),
-        default_type="interactive",
-    )
+    agent_config = config.get("agent", {}).copy()
+    memory_config = config.get("memory", {})
+    if memory_config.get("enabled"):
+        agent_config.setdefault("agent_class", "memory_bootstrap")
+        if agent_config.get("agent_class") == "memory_bootstrap":
+            agent_config["memory"] = memory_config
+    agent_class_name = agent_config.get("agent_class")
+    if agent_class_name in [None, "memory_bootstrap"]:
+        if agent_class_name == "memory_bootstrap":
+            agent_config = agent_config.copy()
+            agent_config.pop("agent_class", None)
+        agent = SingleCaseProgressTrackingAgent(
+            get_model(config=config.get("model", {})),
+            env,
+            **agent_config,
+        )
+    else:
+        agent = get_agent(
+            get_model(config=config.get("model", {})),
+            env,
+            agent_config,
+            default_type="interactive",
+        )
     agent.run(instance["problem_statement"], instance_id=instance["instance_id"])
 
 
