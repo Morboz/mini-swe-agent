@@ -130,3 +130,11 @@ def test_memory_query_agent_redirects_source_file_reads(monkeypatch):
 
         assert env.actions == []
         assert client.query_calls[-1]["query"] == command
+
+
+def test_memory_query_agent_logs_step_progress(monkeypatch, caplog):
+    agent, _, _ = _agent("find src -name '*.py'", monkeypatch)
+
+    agent.step()
+
+    assert "Step   1 ($0.00)" in caplog.text

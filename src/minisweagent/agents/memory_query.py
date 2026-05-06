@@ -5,6 +5,7 @@ import shlex
 from typing import Any
 
 from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
+from minisweagent.utils.log import logger
 from minisweagent.utils.memory import MemoryClient
 
 
@@ -50,6 +51,10 @@ class MemoryQueryAgent(MemoryBootstrapAgent):
         super().__init__(*args, memory=memory, memory_client=memory_client, **kwargs)
         self.memory_state["revision"] = None
         self.memory_state["redirect_count"] = 0
+
+    def step(self) -> list[dict]:
+        logger.info(f"Step {self.n_calls + 1:3d} (${self.cost:.2f})")
+        return super().step()
 
     def execute_actions(self, message: dict) -> list[dict]:
         outputs = []
