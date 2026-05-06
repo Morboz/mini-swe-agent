@@ -18,6 +18,7 @@ from jinja2 import StrictUndefined, Template
 from rich.live import Live
 
 from minisweagent import Environment
+from minisweagent.agents import get_agent
 from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
 from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.environments import get_environment
@@ -166,14 +167,24 @@ def process_instance(
 
     try:
         env = get_sb_environment(config, instance)
-        agent = ProgressTrackingAgent(
-            model,
-            env,
-            progress_manager=progress_manager,
-            instance_id=instance_id,
-            memory=config.get("memory", {}),
-            **config.get("agent", {}),
-        )
+        agent_config = config.get("agent", {}).copy()
+        memory_config = config.get("memory", {})
+        if memory_config.get("enabled"):
+            agent_config.setdefault("agent_class", "memory_bootstrap")
+            if agent_config.get("agent_class") == "memory_query":
+                agent_config["memory"] = memory_config
+        if agent_config.get("agent_class") == "memory_query":
+            agent = get_agent(model, env, agent_config, default_type="memory_query")
+        else:
+            agent_config.pop("agent_class", None)
+            agent = ProgressTrackingAgent(
+                model,
+                env,
+                progress_manager=progress_manager,
+                instance_id=instance_id,
+                memory=memory_config,
+                **agent_config,
+            )
         info = agent.run(task, instance_id=instance_id)
         exit_status = info.get("exit_status")
         result = info.get("submission")

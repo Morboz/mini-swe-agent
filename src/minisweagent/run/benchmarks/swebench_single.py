@@ -103,7 +103,7 @@ def main(
     memory_config = config.get("memory", {})
     if memory_config.get("enabled"):
         agent_config.setdefault("agent_class", "memory_bootstrap")
-        if agent_config.get("agent_class") == "memory_bootstrap":
+        if agent_config.get("agent_class") in {"memory_bootstrap", "memory_query"}:
             agent_config["memory"] = memory_config
     agent_class_name = agent_config.get("agent_class")
     if agent_class_name in [None, "memory_bootstrap"]:

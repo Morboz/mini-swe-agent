@@ -185,6 +185,51 @@ def test_swebench_single_uses_memory_bootstrap_agent_when_memory_enabled(tmp_pat
         mock_agent.run.assert_called_once_with("Fix it", instance_id="demo__repo-1")
 
 
+def test_swebench_single_routes_memory_query_agent_config(tmp_path):
+    """Test that memory_query receives the top-level memory config."""
+    dataset_path = tmp_path / "custom.jsonl"
+    dataset_path.write_text('{"instance_id":"demo__repo-1","problem_statement":"Fix it"}\n')
+
+    with (
+        patch("minisweagent.run.benchmarks.swebench_single.load_swebench_dataset") as mock_load_dataset,
+        patch("minisweagent.run.benchmarks.swebench_single.get_sb_environment") as mock_get_env,
+        patch("minisweagent.run.benchmarks.swebench_single.get_model") as mock_get_model,
+        patch("minisweagent.run.benchmarks.swebench_single.get_agent") as mock_get_agent,
+    ):
+        mock_load_dataset.return_value = [{"instance_id": "demo__repo-1", "problem_statement": "Fix it"}]
+        mock_agent = mock_get_agent.return_value
+
+        main(
+            subset=str(dataset_path),
+            split="train",
+            instance_spec="demo__repo-1",
+            model_name="deterministic",
+            config_spec=[
+                str(package_dir / "config" / "benchmarks" / "swebench.yaml"),
+                "agent.agent_class=memory_query",
+                "memory.enabled=true",
+                "memory.base_url=http://memory",
+                "memory.query_budget=321",
+            ],
+            environment_class="docker",
+            exit_immediately=True,
+            output=tmp_path / "traj.json",
+            model_class=None,
+            agent_class=None,
+            yolo=False,
+            cost_limit=None,
+        )
+
+        mock_get_agent.assert_called_once()
+        _, _, agent_config = mock_get_agent.call_args.args
+        assert agent_config["agent_class"] == "memory_query"
+        assert agent_config["memory"]["base_url"] == "http://memory"
+        assert agent_config["memory"]["query_budget"] == 321
+        mock_get_env.assert_called_once()
+        mock_get_model.assert_called_once()
+        mock_agent.run.assert_called_once_with("Fix it", instance_id="demo__repo-1")
+
+
 def test_single_case_progress_tracking_agent_logs_step_progress(caplog):
     model = DeterministicModel(outputs=[make_output("done", [], cost=0.25)], cost_per_call=0.25)
 

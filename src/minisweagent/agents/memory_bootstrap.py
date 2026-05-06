@@ -73,6 +73,7 @@ class MemoryBootstrapAgent(DefaultAgent):
             "query_success": True,
             "compile_latency_ms": compile_result.get("_latency_ms", 0),
             "query_latency_ms": query_result.get("_latency_ms", 0),
+            "revision": compile_result.get("revision"),
             "source_file_count": len(files),
             "source_total_bytes": sum(len(file.get("content", "")) for file in files),
             "context_chars": len(query_result.get("extra_context", "")),
