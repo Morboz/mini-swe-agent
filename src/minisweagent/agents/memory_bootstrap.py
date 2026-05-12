@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from minisweagent.agents.default import DefaultAgent
-from minisweagent.utils.memory import MemoryClient
+from minisweagent.utils.memory import MemoryClient, extract_memory_source_files
 
 
 CONTEXT_SEARCH_TOOL = {
@@ -107,7 +107,11 @@ class MemoryBootstrapAgent(DefaultAgent):
         self.memory_config = memory or {}
         self.memory_client = memory_client
         self.extra_template_vars["memory"] = self.memory_config
-        self.memory_state = {"tool_calls": {"context_search": 0, "context_read": 0}}
+        self.memory_state = {
+            "compiled": False,
+            "compile_revision": None,
+            "tool_calls": {"context_search": 0, "context_read": 0},
+        }
         if self.memory_config.get("enabled"):
             self._install_context_tools()
 
@@ -153,7 +157,10 @@ class MemoryBootstrapAgent(DefaultAgent):
         return str(action.get("repo_id") or self.extra_template_vars.get("instance_id", ""))
 
     def _revision(self, action: dict) -> str | None:
-        revision = action.get("revision", self.memory_config.get("revision"))
+        revision = action.get(
+            "revision",
+            self.memory_state.get("compile_revision") or self.memory_config.get("revision"),
+        )
         return str(revision) if revision else None
 
     def _metadata(self, action: dict) -> dict[str, Any]:
@@ -166,6 +173,7 @@ class MemoryBootstrapAgent(DefaultAgent):
         query = str(action.get("query") or "").strip()
         if not query:
             return self._tool_error("context_search requires a non-empty query")
+        self._ensure_compiled(action)
         result = self._memory_client().query_repo(
             self._repo_id(action),
             query,
@@ -176,6 +184,30 @@ class MemoryBootstrapAgent(DefaultAgent):
         self.memory_state["tool_calls"]["context_search"] += 1
         self._update_memory_info("context_search", result)
         return self._tool_output(json.dumps(result, ensure_ascii=False))
+
+    def _ensure_compiled(self, action: dict) -> None:
+        if self.memory_state["compiled"]:
+            return
+        repo_id = self._repo_id(action)
+        files = extract_memory_source_files(self.env, cwd=getattr(getattr(self.env, "config", None), "cwd", ""))
+        result = self._memory_client().compile_repo(
+            repo_id,
+            files,
+            metadata={"instance_id": self.extra_template_vars.get("instance_id", repo_id)},
+            revision=action.get("revision") or self.memory_config.get("revision"),
+            enable_w2=self.memory_config.get("enable_w2", False),
+        )
+        self.memory_state["compiled"] = True
+        self.memory_state["compile_revision"] = result.get("revision")
+        self.extra_template_vars["memory_info"] = {
+            "enabled": True,
+            "repo_id": repo_id,
+            "compile_success": True,
+            "compile_latency_ms": result.get("_latency_ms", 0),
+            "source_file_count": len(files),
+            "source_total_bytes": sum(len(file.get("content", "")) for file in files),
+            "tool_calls": dict(self.memory_state["tool_calls"]),
+        }
 
     def _execute_context_read(self, action: dict) -> dict:
         path = str(action.get("path") or "").strip()

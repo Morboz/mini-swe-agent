@@ -50,6 +50,10 @@ class _MemoryClient:
 
 def test_memory_bootstrap_agent_executes_context_tools_without_startup_bootstrap(monkeypatch):
     client = _MemoryClient()
+    monkeypatch.setattr(
+        "minisweagent.agents.memory_bootstrap.extract_memory_source_files",
+        lambda env, cwd="": [{"path": "pkg/mod.py", "content": "x=1", "language": "python", "is_test": False}],
+    )
 
     agent = MemoryBootstrapAgent(
         model=DeterministicToolcallModel(
@@ -116,13 +120,21 @@ def test_memory_bootstrap_agent_executes_context_tools_without_startup_bootstrap
     info = agent.run("issue text", instance_id="repo__1")
 
     assert info["exit_status"] == "Submitted"
-    assert client.compile_calls == []
+    assert client.compile_calls == [
+        {
+            "repo_id": "repo__1",
+            "files": [{"path": "pkg/mod.py", "content": "x=1", "language": "python", "is_test": False}],
+            "metadata": {"instance_id": "repo__1"},
+            "revision": None,
+            "enable_w2": False,
+        }
+    ]
     assert client.query_calls == [
         {
             "repo_id": "repo__1",
             "query": "find target",
             "metadata": {"instance_id": "repo__1"},
-            "revision": None,
+            "revision": "rev1",
             "budget": 1234,
         }
     ]
@@ -130,6 +142,61 @@ def test_memory_bootstrap_agent_executes_context_tools_without_startup_bootstrap
     observations = [msg for msg in agent.messages if msg.get("role") == "tool"]
     assert "### ctx" in observations[0]["extra"]["raw_output"]
     assert "def target()" in observations[1]["extra"]["raw_output"]
+
+
+def test_memory_bootstrap_agent_reuses_compile_revision_for_multiple_searches(monkeypatch):
+    client = _MemoryClient()
+    monkeypatch.setattr("minisweagent.agents.memory_bootstrap.extract_memory_source_files", lambda env, cwd="": [])
+
+    agent = MemoryBootstrapAgent(
+        model=DeterministicToolcallModel(
+            outputs=[
+                make_toolcall_output(
+                    None,
+                    [
+                        {
+                            "id": "call_search_1",
+                            "type": "function",
+                            "function": {"name": "context_search", "arguments": '{"query": "first"}'},
+                        },
+                        {
+                            "id": "call_search_2",
+                            "type": "function",
+                            "function": {"name": "context_search", "arguments": '{"query": "second"}'},
+                        },
+                    ],
+                    [
+                        {"tool": "context_search", "query": "first", "tool_call_id": "call_search_1"},
+                        {"tool": "context_search", "query": "second", "tool_call_id": "call_search_2"},
+                    ],
+                ),
+                make_toolcall_output(
+                    "finish",
+                    [
+                        {
+                            "id": "call_submit",
+                            "type": "function",
+                            "function": {
+                                "name": "bash",
+                                "arguments": '{"command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\\necho done"}',
+                            },
+                        }
+                    ],
+                    [{"command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\necho done", "tool_call_id": "call_submit"}],
+                ),
+            ]
+        ),
+        env=LocalEnvironment(),
+        system_template="sys",
+        instance_template="task={{task}}",
+        memory={"enabled": True},
+        memory_client=client,
+    )
+
+    agent.run("issue text", instance_id="repo__1")
+
+    assert len(client.compile_calls) == 1
+    assert [call["revision"] for call in client.query_calls] == ["rev1", "rev1"]
 
 
 def test_memory_bootstrap_agent_aborts_on_query_failure(monkeypatch):
