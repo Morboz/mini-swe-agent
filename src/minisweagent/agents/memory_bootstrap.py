@@ -26,11 +26,14 @@ CONTEXT_SEARCH_TOOL = {
                 },
                 "repo_id": {
                     "type": "string",
-                    "description": "Repository identifier. Defaults to the current SWE-bench instance_id.",
+                    "description": "Repository identifier. Use the current SWE-bench instance_id; defaults to it when omitted.",
                 },
                 "revision": {
                     "type": "string",
-                    "description": "Logical revision label to query. Defaults to memory.revision if set.",
+                    "description": (
+                        "Optional revision override. Usually omit this: the agent compiles revision 'latest' "
+                        "before the first context_search and then automatically queries the compiled revision."
+                    ),
                 },
                 "budget": {
                     "type": "integer",
@@ -62,11 +65,14 @@ CONTEXT_READ_TOOL = {
                 "path": {"type": "string", "description": "Repository-relative file path to read."},
                 "repo_id": {
                     "type": "string",
-                    "description": "Repository identifier. Defaults to the current SWE-bench instance_id.",
+                    "description": "Repository identifier. Use the current SWE-bench instance_id; defaults to it when omitted.",
                 },
                 "revision": {
                     "type": "string",
-                    "description": "Logical revision label to query. Defaults to memory.revision if set.",
+                    "description": (
+                        "Optional revision override. Usually omit this: context_read automatically uses the "
+                        "compiled revision after context_search has compiled the repository."
+                    ),
                 },
                 "start_line": {
                     "type": "integer",
@@ -159,7 +165,7 @@ class MemoryBootstrapAgent(DefaultAgent):
     def _revision(self, action: dict) -> str | None:
         revision = action.get(
             "revision",
-            self.memory_state.get("compile_revision") or self.memory_config.get("revision"),
+            self.memory_state.get("compile_revision") or self.memory_config.get("revision") or "latest",
         )
         return str(revision) if revision else None
 
@@ -194,7 +200,7 @@ class MemoryBootstrapAgent(DefaultAgent):
             repo_id,
             files,
             metadata={"instance_id": self.extra_template_vars.get("instance_id", repo_id)},
-            revision=action.get("revision") or self.memory_config.get("revision"),
+            revision=action.get("revision") or self.memory_config.get("revision") or "latest",
             enable_w2=self.memory_config.get("enable_w2", False),
         )
         self.memory_state["compiled"] = True

@@ -125,7 +125,7 @@ def test_memory_bootstrap_agent_executes_context_tools_without_startup_bootstrap
             "repo_id": "repo__1",
             "files": [{"path": "pkg/mod.py", "content": "x=1", "language": "python", "is_test": False}],
             "metadata": {"instance_id": "repo__1"},
-            "revision": None,
+            "revision": "latest",
             "enable_w2": False,
         }
     ]
@@ -196,6 +196,7 @@ def test_memory_bootstrap_agent_reuses_compile_revision_for_multiple_searches(mo
     agent.run("issue text", instance_id="repo__1")
 
     assert len(client.compile_calls) == 1
+    assert client.compile_calls[0]["revision"] == "latest"
     assert [call["revision"] for call in client.query_calls] == ["rev1", "rev1"]
 
 

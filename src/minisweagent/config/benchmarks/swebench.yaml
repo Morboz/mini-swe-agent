@@ -37,7 +37,8 @@ agent:
     - Use `context_search` early, before broad shell searching, to retrieve relevant codebase context for this issue.
     - Use focused queries about symbols, file paths, expected behavior, call flow, and edge cases.
     - When `context_search` returns a relevant file path or line span, use `context_read` to inspect the exact source context.
-    - Use `repo_id="{{ instance_id }}"` when a memory tool asks for a repository identifier. Use the configured revision only if one is provided; otherwise omit it.
+    - Use `repo_id="{{ instance_id }}"` when a memory tool asks for a repository identifier.
+    - Do not pass `revision` unless it is explicitly configured for this run. When omitted, the first `context_search` compiles revision `"latest"`, and later memory calls automatically use that compiled revision.
     - Continue using `bash` for editing files, running reproduction scripts, and verifying the final patch.
 
     {% endif %}

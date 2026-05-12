@@ -145,6 +145,9 @@ def test_swebench_memory_prompt_instructs_context_tool_usage():
     assert "Memory Context Tools" in prompt
     assert "Use `context_search` early" in prompt
     assert 'repo_id="demo__repo-1"' in prompt
+    assert "Do not pass `revision` unless it is explicitly configured" in prompt
+    assert 'compiles revision `"latest"`' in prompt
+    assert "automatically use that compiled revision" in prompt
 
 
 def test_filter_instances_no_filters():
