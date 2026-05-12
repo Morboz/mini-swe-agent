@@ -47,7 +47,7 @@ class OpenRouterResponseModel(OpenRouterModel):
         payload = {
             "model": self.config.model_name,
             "input": messages,
-            "tools": [BASH_TOOL_RESPONSE_API],
+            "tools": self.tools,
             **(self.config.model_kwargs | kwargs),
         }
         try:
@@ -97,7 +97,9 @@ class OpenRouterResponseModel(OpenRouterModel):
 
     def _parse_actions(self, response: dict) -> list[dict]:
         return parse_toolcall_actions_response(
-            response.get("output", []), format_error_template=self.config.format_error_template
+            response.get("output", []),
+            format_error_template=self.config.format_error_template,
+            extra_tool_names={tool["name"] for tool in self.tools if tool["name"] != "bash"},
         )
 
     def format_message(self, **kwargs) -> dict:

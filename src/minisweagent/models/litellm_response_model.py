@@ -40,7 +40,7 @@ class LitellmResponseModel(LitellmModel):
             return litellm.responses(
                 model=self.config.model_name,
                 input=messages,
-                tools=[BASH_TOOL_RESPONSE_API],
+                tools=self.tools,
                 **(self.config.model_kwargs | kwargs),
             )
         except litellm.exceptions.AuthenticationError as e:
@@ -64,7 +64,9 @@ class LitellmResponseModel(LitellmModel):
 
     def _parse_actions(self, response) -> list[dict]:
         return parse_toolcall_actions_response(
-            getattr(response, "output", []), format_error_template=self.config.format_error_template
+            getattr(response, "output", []),
+            format_error_template=self.config.format_error_template,
+            extra_tool_names={tool["name"] for tool in self.tools if tool["name"] != "bash"},
         )
 
     def format_observation_messages(

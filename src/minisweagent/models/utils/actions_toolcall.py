@@ -26,8 +26,15 @@ BASH_TOOL = {
     },
 }
 
+BUILTIN_TOOL_NAMES = {"bash"}
 
-def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> list[dict]:
+
+def parse_toolcall_actions(
+    tool_calls: list,
+    *,
+    format_error_template: str,
+    extra_tool_names: set[str] | None = None,
+) -> list[dict]:
     """Parse tool calls from the response. Raises FormatError if unknown tool or invalid args."""
     if not tool_calls:
         raise FormatError(
@@ -41,6 +48,7 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
             }
         )
     actions = []
+    allowed_tool_names = BUILTIN_TOOL_NAMES | (extra_tool_names or set())
     for tool_call in tool_calls:
         error_msg = ""
         args = {}
@@ -48,9 +56,12 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
             args = json.loads(tool_call.function.arguments)
         except Exception as e:
             error_msg = f"Error parsing tool call arguments: {e}."
-        if tool_call.function.name != "bash":
+        tool_name = tool_call.function.name
+        if tool_name not in allowed_tool_names:
             error_msg += f"Unknown tool '{tool_call.function.name}'."
-        if not isinstance(args, dict) or "command" not in args:
+        if not isinstance(args, dict):
+            error_msg += "Tool call arguments must be a JSON object."
+        elif tool_name == "bash" and "command" not in args:
             error_msg += "Missing 'command' argument in bash tool call."
         if error_msg:
             raise FormatError(
@@ -62,7 +73,10 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
                     "extra": {"interrupt_type": "FormatError"},
                 }
             )
-        actions.append({"command": args["command"], "tool_call_id": tool_call.id})
+        if tool_name == "bash":
+            actions.append({"command": args["command"], "tool_call_id": tool_call.id})
+        else:
+            actions.append({"tool": tool_name, **args, "tool_call_id": tool_call.id})
     return actions
 
 

@@ -16,6 +16,7 @@ from minisweagent.run.benchmarks.swebench import (
     remove_from_preds_file,
     update_preds_file,
 )
+from minisweagent.config import get_config_from_spec
 
 
 def _make_model_from_fixture(text_outputs: list[str], cost_per_call: float = 1.0, **kwargs) -> DeterministicModel:
@@ -123,6 +124,27 @@ def test_load_swebench_dataset_uses_path_loader_for_named_dataset():
         load_swebench_dataset(dataset_path, split="dev")
 
     mock_load_dataset.assert_called_once_with(dataset_path, split="dev")
+
+
+def test_swebench_memory_prompt_instructs_context_tool_usage():
+    config = get_config_from_spec(str(package_dir / "config" / "benchmarks" / "swebench.yaml"))
+    config.setdefault("memory", {})["enabled"] = True
+    model = DeterministicModel(outputs=[])
+
+    class _Env:
+        def get_template_vars(self):
+            return {}
+
+    from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
+
+    agent = MemoryBootstrapAgent(model, _Env(), **config["agent"], memory=config["memory"])
+    agent.extra_template_vars |= {"task": "fix it", "instance_id": "demo__repo-1"}
+
+    prompt = agent._render_template(agent.config.instance_template)
+
+    assert "Memory Context Tools" in prompt
+    assert "Use `context_search` early" in prompt
+    assert 'repo_id="demo__repo-1"' in prompt
 
 
 def test_filter_instances_no_filters():

@@ -47,11 +47,6 @@ class SingleCaseProgressTrackingAgent(MemoryBootstrapAgent):
         logger.info(f"Step {self.n_calls + 1:3d} (${self.cost:.2f})")
         return super().step()
 
-    def _bootstrap_memory(self) -> None:
-        logger.info("Bootstrapping memory...")
-        super()._bootstrap_memory()
-        logger.info("Memory bootstrap finished")
-
 
 # fmt: off
 @app.command()

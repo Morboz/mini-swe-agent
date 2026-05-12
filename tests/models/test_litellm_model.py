@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from minisweagent.exceptions import FormatError
+from minisweagent.agents.memory_bootstrap import CONTEXT_SEARCH_TOOL
 from minisweagent.models.litellm_model import LitellmModel, LitellmModelConfig
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL
 
@@ -37,6 +38,25 @@ class TestLitellmModel:
 
         mock_completion.assert_called_once()
         assert mock_completion.call_args.kwargs["tools"] == [BASH_TOOL]
+
+    @patch("minisweagent.models.litellm_model.litellm.completion")
+    @patch("minisweagent.models.litellm_model.litellm.cost_calculator.completion_cost")
+    def test_query_includes_extra_context_tools(self, mock_cost, mock_completion):
+        tool_call = MagicMock()
+        tool_call.function.name = "context_search"
+        tool_call.function.arguments = '{"query": "find target"}'
+        tool_call.id = "call_context"
+        mock_completion.return_value = _mock_litellm_response([tool_call])
+        mock_cost.return_value = 0.001
+
+        model = LitellmModel(model_name="gpt-4")
+        model.tools.append(CONTEXT_SEARCH_TOOL)
+        result = model.query([{"role": "user", "content": "test"}])
+
+        assert mock_completion.call_args.kwargs["tools"] == [BASH_TOOL, CONTEXT_SEARCH_TOOL]
+        assert result["extra"]["actions"] == [
+            {"tool": "context_search", "query": "find target", "tool_call_id": "call_context"}
+        ]
 
     @patch("minisweagent.models.litellm_model.litellm.completion")
     @patch("minisweagent.models.litellm_model.litellm.cost_calculator.completion_cost")

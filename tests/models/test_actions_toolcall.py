@@ -52,6 +52,25 @@ class TestParseToolcallActions:
             parse_toolcall_actions([tool_call], format_error_template="{{ error }}")
         assert "Unknown tool 'unknown_tool'" in exc_info.value.messages[0]["content"]
 
+    def test_extra_tool_name_returns_tool_action_with_arguments(self):
+        tool_call = MagicMock()
+        tool_call.function.name = "context_search"
+        tool_call.function.arguments = '{"query": "find target", "budget": 1000}'
+        tool_call.id = "call_123"
+
+        assert parse_toolcall_actions(
+            [tool_call],
+            format_error_template="{{ error }}",
+            extra_tool_names={"context_search"},
+        ) == [
+            {
+                "tool": "context_search",
+                "query": "find target",
+                "budget": 1000,
+                "tool_call_id": "call_123",
+            }
+        ]
+
     def test_invalid_json_raises_format_error(self):
         tool_call = MagicMock()
         tool_call.function.name = "bash"

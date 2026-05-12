@@ -20,6 +20,10 @@ class MemoryQueryError(MemoryError):
     """Raised when memory query fails or returns invalid data."""
 
 
+class MemoryReadError(MemoryError):
+    """Raised when memory read fails or returns invalid data."""
+
+
 class MemoryExtractError(MemoryError):
     """Raised when repository extraction from the environment fails."""
 
@@ -90,6 +94,33 @@ class MemoryClient:
         self._require_fields(result.payload, ("repo_id", "revision", "query", "extra_context"), MemoryQueryError)
         if not isinstance(result.payload["extra_context"], str):
             raise MemoryQueryError("Field 'extra_context' must be a string")
+        return result.payload | {"_latency_ms": result.latency_ms}
+
+    def read_repo(
+        self,
+        repo_id: str,
+        path: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        revision: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+    ) -> dict[str, Any]:
+        result = self._post(
+            "/api/v1/read",
+            {
+                "repo_id": repo_id,
+                "path": path,
+                "revision": revision,
+                "start_line": start_line,
+                "end_line": end_line,
+                "metadata": metadata or {},
+            },
+            MemoryReadError,
+        )
+        self._require_fields(result.payload, ("path", "content"), MemoryReadError)
+        if not isinstance(result.payload["content"], str):
+            raise MemoryReadError("Field 'content' must be a string")
         return result.payload | {"_latency_ms": result.latency_ms}
 
     def _post(self, path: str, payload: dict[str, Any], error_cls: type[MemoryError]) -> MemoryCallResult:

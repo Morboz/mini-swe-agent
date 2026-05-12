@@ -29,6 +29,18 @@ agent:
 
     ## Recommended Workflow
 
+    {% if memory is defined and memory.enabled %}
+    ## Memory Context Tools
+
+    The memory context tools are enabled for this benchmark run.
+
+    - Use `context_search` early, before broad shell searching, to retrieve relevant codebase context for this issue.
+    - Use focused queries about symbols, file paths, expected behavior, call flow, and edge cases.
+    - When `context_search` returns a relevant file path or line span, use `context_read` to inspect the exact source context.
+    - Use `repo_id="{{ instance_id }}"` when a memory tool asks for a repository identifier. Use the configured revision only if one is provided; otherwise omit it.
+    - Continue using `bash` for editing files, running reproduction scripts, and verifying the final patch.
+
+    {% endif %}
     1. Analyze the codebase by finding and reading relevant files
     2. Create a script to reproduce the issue
     3. Edit the source code to resolve the issue

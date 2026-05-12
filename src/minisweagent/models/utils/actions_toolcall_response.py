@@ -24,6 +24,8 @@ BASH_TOOL_RESPONSE_API = {
     },
 }
 
+BUILTIN_TOOL_NAMES = {"bash"}
+
 
 def _format_error_message(error_text: str) -> dict:
     """Create a FormatError message in Responses API format."""
@@ -35,7 +37,12 @@ def _format_error_message(error_text: str) -> dict:
     }
 
 
-def parse_toolcall_actions_response(output: list, *, format_error_template: str) -> list[dict]:
+def parse_toolcall_actions_response(
+    output: list,
+    *,
+    format_error_template: str,
+    extra_tool_names: set[str] | None = None,
+) -> list[dict]:
     """Parse tool calls from a Responses API response output.
 
     Filters for function_call items and parses them.
@@ -56,6 +63,7 @@ def parse_toolcall_actions_response(output: list, *, format_error_template: str)
         )
         raise FormatError(_format_error_message(error_text))
     actions = []
+    allowed_tool_names = BUILTIN_TOOL_NAMES | (extra_tool_names or set())
     for tool_call in tool_calls:
         error_msg = ""
         args = {}
@@ -63,16 +71,23 @@ def parse_toolcall_actions_response(output: list, *, format_error_template: str)
             args = json.loads(tool_call.get("arguments", "{}"))
         except Exception as e:
             error_msg = f"Error parsing tool call arguments: {e}."
-        if tool_call.get("name") != "bash":
-            error_msg += f"Unknown tool '{tool_call.get('name')}'."
-        if not isinstance(args, dict) or "command" not in args:
+        tool_name = tool_call.get("name")
+        if tool_name not in allowed_tool_names:
+            error_msg += f"Unknown tool '{tool_name}'."
+        if not isinstance(args, dict):
+            error_msg += "Tool call arguments must be a JSON object."
+        elif tool_name == "bash" and "command" not in args:
             error_msg += "Missing 'command' argument in bash tool call."
         if error_msg:
             error_text = Template(format_error_template, undefined=StrictUndefined).render(
                 error=error_msg.strip(), actions=[]
             )
             raise FormatError(_format_error_message(error_text))
-        actions.append({"command": args["command"], "tool_call_id": tool_call.get("call_id") or tool_call.get("id")})
+        tool_call_id = tool_call.get("call_id") or tool_call.get("id")
+        if tool_name == "bash":
+            actions.append({"command": args["command"], "tool_call_id": tool_call_id})
+        else:
+            actions.append({"tool": tool_name, **args, "tool_call_id": tool_call_id})
     return actions
 
 

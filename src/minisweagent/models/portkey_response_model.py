@@ -53,6 +53,7 @@ class PortkeyResponseAPIModel:
         self.config = PortkeyResponseAPIModelConfig(**kwargs)
         if self.config.litellm_model_registry and Path(self.config.litellm_model_registry).is_file():
             litellm.utils.register_model(json.loads(Path(self.config.litellm_model_registry).read_text()))
+        self.tools = [BASH_TOOL_RESPONSE_API]
 
         self._api_key = os.getenv("PORTKEY_API_KEY")
         if not self._api_key:
@@ -73,7 +74,7 @@ class PortkeyResponseAPIModel:
         return self.client.responses.create(
             model=self.config.model_name,
             input=messages,
-            tools=[BASH_TOOL_RESPONSE_API],
+            tools=self.tools,
             **(self.config.model_kwargs | kwargs),
         )
 
@@ -108,7 +109,11 @@ class PortkeyResponseAPIModel:
     def _parse_actions(self, response) -> list[dict]:
         """Parse tool calls from the response API response."""
         output = response.output if hasattr(response, "output") else response.get("output", [])
-        return parse_toolcall_actions_response(output, format_error_template=self.config.format_error_template)
+        return parse_toolcall_actions_response(
+            output,
+            format_error_template=self.config.format_error_template,
+            extra_tool_names={tool["name"] for tool in self.tools if tool["name"] != "bash"},
+        )
 
     def _calculate_cost(self, response) -> dict[str, float]:
         try:
