@@ -37,6 +37,9 @@ agent:
     - Use `context_search` early, before broad shell searching, to retrieve relevant codebase context for this issue.
     - Use focused queries about symbols, file paths, expected behavior, call flow, and edge cases.
     - When `context_search` returns a relevant file path or line span, use `context_read` to inspect the exact source context.
+    - After `context_read`, run one grounded `context_search` with `metadata.grounding_phase="grounded"` before editing or broad shell exploration.
+    - If a memory tool says retrieval coverage is poor or asks for a retry/fallback, follow that next memory step before using bash.
+    - After grounded search accepts target files, do not run broad grep/find/rg searches for alternative files; edit or test the accepted targets.
     - Use `repo_id="{{ instance_id }}"` when a memory tool asks for a repository identifier.
     - Do not pass `revision` unless it is explicitly configured for this run. When omitted, the first `context_search` compiles revision `"latest"`, and later memory calls automatically use that compiled revision.
     - Continue using `bash` for editing files, running reproduction scripts, and verifying the final patch.

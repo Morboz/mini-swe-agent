@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from minisweagent.agents.default import DefaultAgent
@@ -116,6 +117,11 @@ class MemoryBootstrapAgent(DefaultAgent):
         self.memory_state = {
             "compiled": False,
             "compile_revision": None,
+            "retrieval_state": "not_started",
+            "candidate_files": [],
+            "accepted_targets": [],
+            "test_plan_files": [],
+            "grounded_search_required": False,
             "tool_calls": {"context_search": 0, "context_read": 0},
         }
         if self.memory_config.get("enabled"):
@@ -144,6 +150,9 @@ class MemoryBootstrapAgent(DefaultAgent):
         return self.add_messages(*self.model.format_observation_messages(message, outputs, self.get_template_vars()))
 
     def _execute_action(self, action: dict) -> dict:
+        block_message = self._gate_block_message(action)
+        if block_message:
+            return self._tool_error(block_message)
         tool_name = action.get("tool")
         if tool_name == "context_search":
             return self._execute_context_search(action)
@@ -173,7 +182,63 @@ class MemoryBootstrapAgent(DefaultAgent):
         metadata = action.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
+        metadata.setdefault("case_id", self._repo_id(action))
+        metadata.setdefault("retrieval_mode", "symbolic")
+        metadata.setdefault("grounding_phase", "seed")
+        metadata.setdefault("response_format", "bundle")
         return {"instance_id": self.extra_template_vars.get("instance_id", ""), **metadata}
+
+    def _gate_block_message(self, action: dict) -> str | None:
+        if not self.memory_config.get("enabled"):
+            return None
+        tool_name = action.get("tool")
+        if tool_name == "context_search":
+            if self.memory_state["grounded_search_required"] and self._metadata(action).get("grounding_phase") != "grounded":
+                return (
+                    "Retrieval gate active: context_read requires a grounded context_search next, "
+                    "with metadata.grounding_phase='grounded'."
+                )
+            if self.memory_state["retrieval_state"] == "grounded":
+                return (
+                    "Retrieval gate active: accepted targets close exploration; additional "
+                    "context_search calls are blocked. Continue with accepted-target reads, editing, or tests."
+                )
+            return None
+        if tool_name == "context_read":
+            path = str(action.get("path") or "").strip()
+            if self._is_context_read_allowed(path):
+                return None
+            return (
+                "Retrieval gate active: context_read is limited to accepted targets or test-plan files "
+                "after a grounded target has been accepted."
+            )
+        if "command" in action:
+            return self._bash_gate_block_message(str(action.get("command") or ""))
+        return None
+
+    def _bash_gate_block_message(self, command: str) -> str | None:
+        state = self.memory_state["retrieval_state"]
+        if state == "not_started":
+            return (
+                "Retrieval gate active: call context_search first with "
+                "metadata.retrieval_mode='symbolic' and metadata.grounding_phase='seed'."
+            )
+        if state == "inspect_candidates":
+            return (
+                "Retrieval gate active: use context_read on a candidate file before "
+                "shell exploration or editing."
+            )
+        if state == "context_read" and (self._is_edit_command(command) or self._is_broad_discovery_command(command)):
+            return (
+                "Retrieval gate active: context_read requires a grounded context_search "
+                "before broad terminal exploration or editing."
+            )
+        if state == "grounded" and self._is_broad_discovery_command(command):
+            return (
+                "Retrieval gate active: accepted targets plus server test plan are available; "
+                "broad grep/find/search commands are blocked."
+            )
+        return None
 
     def _execute_context_search(self, action: dict) -> dict:
         query = str(action.get("query") or "").strip()
@@ -188,6 +253,7 @@ class MemoryBootstrapAgent(DefaultAgent):
             budget=self._positive_int(action.get("budget"), self.memory_config.get("query_budget", 4000)),
         )
         self.memory_state["tool_calls"]["context_search"] += 1
+        self._record_context_search_result(result, metadata=self._metadata(action))
         self._update_memory_info("context_search", result)
         return self._tool_output(json.dumps(result, ensure_ascii=False))
 
@@ -228,8 +294,106 @@ class MemoryBootstrapAgent(DefaultAgent):
             end_line=self._optional_positive_int(action.get("end_line")),
         )
         self.memory_state["tool_calls"]["context_read"] += 1
+        self.memory_state["retrieval_state"] = "context_read"
+        self.memory_state["grounded_search_required"] = True
+        path = str(result.get("path") or path)
+        if path and path not in self.memory_state["candidate_files"]:
+            self.memory_state["candidate_files"].append(path)
         self._update_memory_info("context_read", result)
         return self._tool_output(self._format_context_read(result, requested_path=path))
+
+    def _record_context_search_result(self, result: dict[str, Any], *, metadata: dict[str, Any]) -> None:
+        phase = str(metadata.get("grounding_phase") or "seed")
+        coverage = str(result.get("coverage") or "").lower()
+        files = self._extract_result_files(result)
+        if phase == "grounded":
+            accepted = self._coerce_string_list(result.get("accepted_targets")) or self._coerce_string_list(
+                result.get("grounded_files")
+            ) or files or list(self.memory_state["candidate_files"])
+            self.memory_state["accepted_targets"] = accepted
+            self.memory_state["retrieval_state"] = "grounded"
+            self.memory_state["grounded_search_required"] = False
+            for path in self._extract_test_plan_files(result.get("test_plan")):
+                if path not in self.memory_state["test_plan_files"]:
+                    self.memory_state["test_plan_files"].append(path)
+            return
+        if coverage == "poor" or not files:
+            self.memory_state["retrieval_state"] = "retry"
+            return
+        for path in files:
+            if path not in self.memory_state["candidate_files"]:
+                self.memory_state["candidate_files"].append(path)
+        self.memory_state["retrieval_state"] = "inspect_candidates"
+
+    def _is_context_read_allowed(self, path: str) -> bool:
+        if self.memory_state["retrieval_state"] != "grounded":
+            return True
+        accepted = set(self.memory_state["accepted_targets"])
+        test_plan = set(self.memory_state["test_plan_files"])
+        return path in accepted or path in test_plan or path.startswith("tests/")
+
+    @staticmethod
+    def _coerce_string_list(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        if not isinstance(value, list):
+            return []
+        result: list[str] = []
+        for item in value:
+            text = str(item).strip()
+            if text and text not in result:
+                result.append(text)
+        return result
+
+    @staticmethod
+    def _extract_result_files(result: dict[str, Any]) -> list[str]:
+        files: list[str] = []
+        for match in result.get("matches") or []:
+            if isinstance(match, dict):
+                path = match.get("path") or match.get("file") or match.get("filepath")
+                if path and str(path) not in files:
+                    files.append(str(path))
+        for key in ("grounded_files", "accepted_targets"):
+            for path in MemoryBootstrapAgent._coerce_string_list(result.get(key)):
+                if path not in files:
+                    files.append(path)
+        return files
+
+    @staticmethod
+    def _extract_test_plan_files(test_plan: Any) -> list[str]:
+        if not isinstance(test_plan, dict):
+            return []
+        paths: list[str] = []
+        for key in ("files", "file_paths", "paths", "read_files", "targets", "target_files"):
+            value = test_plan.get(key)
+            items = value if isinstance(value, list) else [value]
+            for item in items:
+                if isinstance(item, str) and item.strip() and item not in paths:
+                    paths.append(item)
+                elif isinstance(item, dict):
+                    path = item.get("path") or item.get("file") or item.get("filepath")
+                    if path and str(path) not in paths:
+                        paths.append(str(path))
+        return paths
+
+    @staticmethod
+    def _is_broad_discovery_command(command: str) -> bool:
+        text = " ".join(str(command or "").split()).lower()
+        if not text:
+            return False
+        patterns = ("grep ", " find ", " fd ", " rg ", "git grep", "ack ", "ag ")
+        return any(pattern in f" {text} " for pattern in patterns) or text.startswith(("find ", "grep ", "rg "))
+
+    @staticmethod
+    def _is_edit_command(command: str) -> bool:
+        text = " ".join(str(command or "").split()).lower()
+        if not text:
+            return False
+        return bool(
+            re.search(r"\bopen\s*\(", text)
+            or any(marker in text for marker in ("cat >", "tee ", "sed -i", "perl -pi", "apply_patch", "git apply"))
+            or ">" in text
+        )
 
     def _update_memory_info(self, tool_name: str, result: dict[str, Any]) -> None:
         info = self.extra_template_vars.setdefault("memory_info", {"enabled": bool(self.memory_config.get("enabled"))})
