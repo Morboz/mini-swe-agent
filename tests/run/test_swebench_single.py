@@ -185,6 +185,23 @@ def test_swebench_single_uses_memory_bootstrap_agent_when_memory_enabled(tmp_pat
         mock_agent.run.assert_called_once_with("Fix it", instance_id="demo__repo-1")
 
 
+def test_single_case_progress_tracking_agent_renders_prompt_when_memory_omitted():
+    """The single-case wrapper defaults memory off without breaking strict Jinja rendering."""
+    config = {
+        "system_template": "system",
+        "instance_template": "{% if memory is defined and memory.enabled %}memory{% endif %}{{ task }}",
+    }
+
+    class _Env:
+        def get_template_vars(self):
+            return {}
+
+    agent = SingleCaseProgressTrackingAgent(DeterministicModel(outputs=[]), _Env(), **config)
+    agent.extra_template_vars |= {"task": "Fix it", "instance_id": "demo__repo-1"}
+
+    assert agent._render_template(agent.config.instance_template) == "Fix it"
+
+
 def test_single_case_progress_tracking_agent_logs_step_progress(caplog):
     model = DeterministicModel(outputs=[make_output("done", [], cost=0.25)], cost_per_call=0.25)
 

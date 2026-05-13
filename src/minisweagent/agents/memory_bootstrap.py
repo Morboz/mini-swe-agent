@@ -111,7 +111,7 @@ class MemoryBootstrapAgent(DefaultAgent):
         self, *args, memory: dict[str, Any] | None = None, memory_client: MemoryClient | None = None, **kwargs
     ):
         super().__init__(*args, **kwargs)
-        self.memory_config = memory or {}
+        self.memory_config = {"enabled": False, **(memory or {})}
         self.memory_client = memory_client
         self.extra_template_vars["memory"] = self.memory_config
         self.memory_state = {
