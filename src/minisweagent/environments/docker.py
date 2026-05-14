@@ -83,8 +83,9 @@ class DockerEnvironment:
             "-w",
             self.config.cwd,
             *self.config.run_args,
-            self.config.image,
+            "--entrypoint",
             "sleep",
+            self.config.image,
             self.config.container_timeout,
         ]
         self.logger.debug(f"Starting container with command: {shlex.join(cmd)}")

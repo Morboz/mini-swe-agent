@@ -228,3 +228,21 @@ def test_docker_environment_custom_container_timeout(executable):
             )
     finally:
         env.cleanup()
+
+def test_docker_environment_start_container_overrides_entrypoint() -> None:
+    """Test that the keepalive command bypasses image entrypoints."""
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="container123\n", stderr="")
+
+    with patch("subprocess.run", return_value=completed) as run_mock:
+        env = DockerEnvironment(image="custom:image", executable="docker")
+
+    try:
+        start_cmd = run_mock.call_args.args[0]
+        assert "--entrypoint" in start_cmd
+        entrypoint_index = start_cmd.index("--entrypoint")
+        assert start_cmd[entrypoint_index + 1] == "sleep"
+        assert start_cmd[-1] == "2h"
+        assert start_cmd[-2] == "custom:image"
+    finally:
+        env.container_id = None
+
