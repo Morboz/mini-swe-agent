@@ -36,13 +36,16 @@ class MemoryClient:
         *,
         base_url: str,
         timeout_seconds: int,
+        api_key: str | None = None,
         session: requests.Session | Any | None = None,
         headers: dict[str, str] | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.session = session or requests.Session()
-        self.headers = headers or {}
+        self.headers = dict(headers) if headers else {}
+        if api_key:
+            self.headers.setdefault("authorization", f"Bearer {api_key}")
 
     def compile_repo(
         self,

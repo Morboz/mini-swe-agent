@@ -25,6 +25,7 @@ class MemoryBootstrapAgent(DefaultAgent):
         client = self.memory_client or MemoryClient(
             base_url=self.memory_config["base_url"],
             timeout_seconds=self.memory_config.get("timeout_seconds", 300),
+            api_key=self.memory_config.get("api_key"),
         )
         repo_id = self.extra_template_vars.get("instance_id", "")
         files = extract_memory_source_files(self.env, cwd=getattr(getattr(self.env, "config", None), "cwd", ""))
