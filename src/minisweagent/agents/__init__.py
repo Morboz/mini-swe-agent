@@ -9,6 +9,7 @@ _AGENT_MAPPING = {
     "default": "minisweagent.agents.default.DefaultAgent",
     "interactive": "minisweagent.agents.interactive.InteractiveAgent",
     "memory_bootstrap": "minisweagent.agents.memory_bootstrap.MemoryBootstrapAgent",
+    "context_tool": "minisweagent.agents.context_tool_agent.ContextToolAgent",
 }
 
 

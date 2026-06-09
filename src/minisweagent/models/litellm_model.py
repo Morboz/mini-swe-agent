@@ -43,6 +43,8 @@ class LitellmModelConfig(BaseModel):
     """Template used to render the observation after executing an action."""
     multimodal_regex: str = ""
     """Regex to extract multimodal content. Empty string disables multimodal processing."""
+    extra_tools: list[dict[str, Any]] = []
+    """Additional tool schemas to make available to the model alongside bash."""
 
 
 class LitellmModel:
@@ -65,7 +67,7 @@ class LitellmModel:
             return litellm.completion(
                 model=self.config.model_name,
                 messages=messages,
-                tools=[BASH_TOOL],
+                tools=[BASH_TOOL] + self.config.extra_tools,
                 **(self.config.model_kwargs | kwargs),
             )
         except litellm.exceptions.AuthenticationError as e:

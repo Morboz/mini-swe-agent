@@ -7,6 +7,7 @@ from datasets import load_dataset
 
 from minisweagent import global_config_dir
 from minisweagent.agents import get_agent
+from minisweagent.agents.context_tool_agent import ContextToolAgent
 from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
 from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.models import get_model
@@ -51,6 +52,14 @@ class SingleCaseProgressTrackingAgent(MemoryBootstrapAgent):
         logger.info("Bootstrapping memory...")
         super()._bootstrap_memory()
         logger.info("Memory bootstrap finished")
+
+
+class SingleCaseContextToolAgent(ContextToolAgent):
+    """Single-case agent wrapper with context tools that logs step progress."""
+
+    def step(self) -> dict:
+        logger.info(f"Step {self.n_calls + 1:3d} (${self.cost:.2f})")
+        return super().step()
 
 
 # fmt: off
@@ -111,6 +120,15 @@ def main(
             agent_config = agent_config.copy()
             agent_config.pop("agent_class", None)
         agent = SingleCaseProgressTrackingAgent(
+            get_model(config=config.get("model", {})),
+            env,
+            **agent_config,
+        )
+    elif agent_class_name == "context_tool":
+        agent_config = agent_config.copy()
+        agent_config.pop("agent_class", None)
+        agent_config["memory"] = memory_config
+        agent = SingleCaseContextToolAgent(
             get_model(config=config.get("model", {})),
             env,
             **agent_config,

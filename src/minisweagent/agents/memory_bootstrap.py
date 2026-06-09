@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from minisweagent.agents.default import DefaultAgent
-from minisweagent.utils.memory import MemoryClient, extract_memory_source_files
+from minisweagent.utils.memory import FormsyMemoryError, MemoryClient, extract_memory_source_files
 
 
 class MemoryBootstrapAgent(DefaultAgent):
