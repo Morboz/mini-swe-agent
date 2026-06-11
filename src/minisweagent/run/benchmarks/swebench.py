@@ -18,6 +18,7 @@ from jinja2 import StrictUndefined, Template
 from rich.live import Live
 
 from minisweagent import Environment
+from minisweagent.agents.context_tool_agent import ContextToolAgent
 from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
 from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.environments import get_environment
@@ -68,6 +69,20 @@ _OUTPUT_FILE_LOCK = threading.Lock()
 
 class ProgressTrackingAgent(MemoryBootstrapAgent):
     """Simple wrapper around DefaultAgent that provides progress updates."""
+
+    def __init__(self, *args, progress_manager: RunBatchProgressManager, instance_id: str = "", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.progress_manager: RunBatchProgressManager = progress_manager
+        self.instance_id = instance_id
+
+    def step(self) -> dict:
+        """Override step to provide progress updates."""
+        self.progress_manager.update_instance_status(self.instance_id, f"Step {self.n_calls + 1:3d} (${self.cost:.2f})")
+        return super().step()
+
+
+class ProgressTrackingContextToolAgent(ContextToolAgent):
+    """ContextToolAgent wrapper that provides progress updates."""
 
     def __init__(self, *args, progress_manager: RunBatchProgressManager, instance_id: str = "", **kwargs):
         super().__init__(*args, **kwargs)
@@ -166,14 +181,25 @@ def process_instance(
 
     try:
         env = get_sb_environment(config, instance)
-        agent = ProgressTrackingAgent(
-            model,
-            env,
-            progress_manager=progress_manager,
-            instance_id=instance_id,
-            memory=config.get("memory", {}),
-            **config.get("agent", {}),
-        )
+        agent_class_name = config.get("agent", {}).get("agent_class", "")
+        if agent_class_name == "context_tool":
+            agent = ProgressTrackingContextToolAgent(
+                model,
+                env,
+                progress_manager=progress_manager,
+                instance_id=instance_id,
+                memory=config.get("memory", {}),
+                **config.get("agent", {}),
+            )
+        else:
+            agent = ProgressTrackingAgent(
+                model,
+                env,
+                progress_manager=progress_manager,
+                instance_id=instance_id,
+                memory=config.get("memory", {}),
+                **config.get("agent", {}),
+            )
         info = agent.run(task, instance_id=instance_id)
         exit_status = info.get("exit_status")
         result = info.get("submission")
