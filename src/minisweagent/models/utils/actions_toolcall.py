@@ -155,8 +155,15 @@ def format_toolcall_observation_messages(
     padded_outputs = outputs + [not_executed] * (len(actions) - len(outputs))
     results = []
     for action, output in zip(actions, padded_outputs):
+        # Ensure all fields referenced by observation templates exist.
+        # Non-bash tools (context_search, context_read) may not set these.
+        render_output = {
+            "output": output.get("output", ""),
+            "returncode": output.get("returncode", 0),
+            "exception_info": output.get("exception_info", None),
+        }
         content = Template(observation_template, undefined=StrictUndefined).render(
-            output=output, **(template_vars or {})
+            output=render_output, **(template_vars or {})
         )
         msg = {
             "content": content,
