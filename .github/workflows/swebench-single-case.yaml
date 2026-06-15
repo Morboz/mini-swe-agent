@@ -47,16 +47,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-
       - name: Free disk space
-        # swe-bench eval 镜像可达数 GB，hosted runner 默认 ~14GB，先清出空间
+        # swe-bench eval 镜像可达数 GB，hosted runner 默认 ~14GB，先清出空间。
+        # 必须在 setup-python 之前：$AGENT_TOOLSDIRECTORY 即 /opt/hostedtoolcache，
+        # 先删掉预装 toolcache 再让 setup-python 装回所需 Python，否则会把刚装好的 Python 删掉。
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /usr/local/.ghcup /opt/conda "$AGENT_TOOLSDIRECTORY"
           df -h /
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
 
       - name: Download dataset jsonl from release
         env:
