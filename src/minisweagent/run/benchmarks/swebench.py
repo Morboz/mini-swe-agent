@@ -110,8 +110,19 @@ def get_sb_environment(config: dict, instance: dict) -> Environment:
     env_config = config.setdefault("environment", {})
     env_config["environment_class"] = env_config.get("environment_class", "docker")
     image_name = get_swebench_docker_image_name(instance)
+    # Compute the official SWE-bench image as a fallback when image_name comes from
+    # a custom registry (e.g. a private mirror) that may be unreachable.
+    fallback_image = None
+    if "image_name" in instance or "docker_image" in instance:
+        # image_name was taken from the dataset; compute the official image as fallback
+        iid = instance["instance_id"]
+        id_docker_compatible = iid.replace("__", "_1776_")
+        fallback_image = f"docker.io/swebench/sweb.eval.x86_64.{id_docker_compatible}:latest".lower()
+
     if env_config["environment_class"] in ["docker", "swerex_modal"]:
         env_config["image"] = image_name
+        if fallback_image and fallback_image != image_name:
+            env_config["fallback_image"] = fallback_image
     elif env_config["environment_class"] in ["singularity", "contree"]:
         env_config["image"] = "docker://" + image_name
 

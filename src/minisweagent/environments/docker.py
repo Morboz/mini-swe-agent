@@ -33,6 +33,10 @@ class DockerEnvironmentConfig(BaseModel):
     """
     container_timeout: str = "2h"
     """Max duration to keep container running. Uses the same format as the sleep command."""
+    fallback_image: str | None = None
+    """Fallback image to try if the primary image fails to pull.
+    If set and the primary image fails, the container will be started with this image instead.
+    """
     pull_timeout: int = 120
     """Timeout in seconds for pulling images."""
     interpreter: list[str] = ["bash", "-lc"]
@@ -72,31 +76,65 @@ class DockerEnvironment:
         }
 
     def _start_container(self):
-        """Start the Docker container and return the container ID."""
-        container_name = f"minisweagent-{uuid.uuid4().hex[:8]}"
-        cmd = [
-            self.config.executable,
-            "run",
-            "-d",
-            "--name",
-            container_name,
-            "-w",
-            self.config.cwd,
-            *self.config.run_args,
-            self.config.image,
-            "sleep",
-            self.config.container_timeout,
-        ]
-        self.logger.debug(f"Starting container with command: {shlex.join(cmd)}")
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=self.config.pull_timeout,  # docker pull might take a while
-            check=True,
-        )
-        self.logger.info(f"Started container {container_name} with ID {result.stdout.strip()}")
-        self.container_id = result.stdout.strip()
+        """Start the Docker container and return the container ID.
+
+        If the primary image fails to pull, tries the fallback_image (if configured).
+        """
+        images_to_try = [self.config.image]
+        if self.config.fallback_image and self.config.fallback_image != self.config.image:
+            images_to_try.append(self.config.fallback_image)
+
+        last_error: Exception | None = None
+        for image in images_to_try:
+            container_name = f"minisweagent-{uuid.uuid4().hex[:8]}"
+            cmd = [
+                self.config.executable,
+                "run",
+                "-d",
+                "--name",
+                container_name,
+                "-w",
+                self.config.cwd,
+                *self.config.run_args,
+                image,
+                "sleep",
+                self.config.container_timeout,
+            ]
+            self.logger.debug(f"Starting container with command: {shlex.join(cmd)}")
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.config.pull_timeout,  # docker pull might take a while
+                    check=True,
+                )
+                self.logger.info(f"Started container {container_name} with ID {result.stdout.strip()}")
+                if image != self.config.image:
+                    self.logger.info(f"Using fallback image: {image}")
+                self.container_id = result.stdout.strip()
+                return
+            except subprocess.CalledProcessError as e:
+                last_error = e
+                stderr = e.stderr.strip() if e.stderr else ""
+                self.logger.warning(f"Failed to start container with image {image}: {stderr}")
+                # Clean up the failed container (it may have been created but in a bad state)
+                subprocess.Popen(
+                    f"{self.config.executable} rm -f {container_name} >/dev/null 2>&1",
+                    shell=True,
+                )
+                continue
+            except subprocess.TimeoutExpired as e:
+                last_error = e
+                self.logger.warning(f"Timeout pulling image {image}")
+                # Clean up the failed container
+                subprocess.Popen(
+                    f"{self.config.executable} rm -f {container_name} >/dev/null 2>&1",
+                    shell=True,
+                )
+                continue
+
+        raise last_error or RuntimeError(f"Failed to start container with all images: {images_to_try}")
 
     def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict[str, Any]:
         """Execute a command in the Docker container and return the result as a dict."""
