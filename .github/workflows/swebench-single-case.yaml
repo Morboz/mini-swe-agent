@@ -1,0 +1,142 @@
+name: swebench-single-case
+
+# 手动触发：在 GitHub-hosted runner 上跑单个 SWE-bench case。
+# mini-swe-agent 的主循环跑在宿主机上，通过 DockerEnvironment 用 `docker exec`
+# 把每条 bash 命令送进 swebench 的 eval 容器（docker.io/swebench/sweb.eval.x86_64.<id>）
+# 里执行；patch 是 agent 在容器内用 git diff 生成后捕获，写入输出目录的 preds.json。
+#
+# 运行前置：
+#   - 仓库 Secrets 里配置 MSWEA_API_KEY（模型 api_key，避免硬编码/泄露到日志）。
+#   - 触发时 api_base 必须填一个 runner 能访问到的公网 endpoint
+#     （swebench.yaml 里默认的内网 172.17.x.x 在 hosted runner 上不可达）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance_id:
+        description: "要跑的 SWE-bench instance ID，例如 django__django-12345"
+        required: true
+        type: string
+      subset:
+        description: "数据集 subset（verified | lite | full，或本地 JSONL 路径）"
+        required: false
+        default: "verified"
+        type: string
+      split:
+        description: "数据集 split（SWE-Bench_Verified 标准是 test）"
+        required: false
+        default: "test"
+        type: string
+      config_file:
+        description: "基础配置文件（swebench.yaml = 默认 agent，只有 bash 工具）"
+        required: false
+        default: "swebench.yaml"
+        type: string
+      model_name:
+        description: "litellm 模型名，例如 openai/glm-5.1"
+        required: false
+        default: "openai/glm-5.1"
+        type: string
+      api_base:
+        description: "runner 可达的公网模型 endpoint（覆盖 swebench.yaml 的 api_base）"
+        required: true
+        type: string
+
+# 跳过交互式 setup() 提示；其余用 -c 覆盖模型，不依赖全局 config 文件。
+env:
+  MSWEA_CONFIGURED: "true"
+
+jobs:
+  run-case:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Free disk space
+        # swebench eval 镜像可达数 GB，hosted runner 默认 ~14GB，先清出空间
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/conda "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install mini-swe-agent
+        run: uv pip install --python ${Python_ROOT_DIR} -e '.[full]'
+
+      - name: Write runtime secrets config
+        # secret 只落进 /tmp/secrets.yaml 文件（日志里被 mask），通过 -c 合并，
+        # 覆盖 swebench.yaml 里硬编码的 api_key；该文件不上传为 artifact，最后删除。
+        env:
+          MSWEA_API_KEY: ${{ secrets.MSWEA_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os, pathlib
+          key = os.environ["MSWEA_API_KEY"].replace('"', '\\"')
+          pathlib.Path("/tmp/secrets.yaml").write_text(
+              'model:\n  model_kwargs:\n    api_key: "%s"\n' % key
+          )
+          print("runtime secrets config written to /tmp/secrets.yaml")
+          PY
+
+      - name: Run single SWE-bench case
+        env:
+          INSTANCE_ID: ${{ inputs.instance_id }}
+        run: |
+          set -euo pipefail
+          OUTPUT_DIR="runs/${INSTANCE_ID}"
+          mkdir -p "$OUTPUT_DIR"
+
+          python src/minisweagent/run/benchmarks/swebench.py \
+            -c "${{ inputs.config_file }}" \
+            -c "/tmp/secrets.yaml" \
+            -c "model.model_name=${{ inputs.model_name }}" \
+            -c "model.model_kwargs.api_base=${{ inputs.api_base }}" \
+            -c "environment.pull_timeout=1800" \
+            --subset "${{ inputs.subset }}" \
+            --split "${{ inputs.split }}" \
+            --filter "^${INSTANCE_ID}\$" \
+            --output "$OUTPUT_DIR" \
+            --workers 1
+
+      - name: Extract patch
+        # 把 preds.json 里的 model_patch 单独抽成 patch.diff，作为可直接下载的产物
+        env:
+          INSTANCE_ID: ${{ inputs.instance_id }}
+        run: |
+          python - "runs/${INSTANCE_ID}/preds.json" "runs/${INSTANCE_ID}/patch.diff" <<'PY'
+          import json, sys
+          preds_path, out_path = sys.argv[1], sys.argv[2]
+          try:
+              preds = json.loads(open(preds_path).read())
+          except FileNotFoundError:
+              print(f"::error::preds.json not found at {preds_path} (case 未跑完或 filter 未命中)")
+              sys.exit(1)
+          if not preds:
+              print("::error::没有生成 prediction（filter 未命中该 instance 或运行失败）")
+              sys.exit(1)
+          for iid, entry in preds.items():
+              patch = entry.get("model_patch", "") or ""
+              open(out_path, "w").write(patch)
+              print(f"instance={iid} patch_chars={len(patch)} -> {out_path}")
+          PY
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swebench-${{ inputs.instance_id }}-run${{ github.run_id }}
+          path: |
+            runs/${{ inputs.instance_id }}/
+          if-no-files-found: warn
+
+      - name: Cleanup secrets file
+        if: always()
+        run: rm -f /tmp/secrets.yaml
