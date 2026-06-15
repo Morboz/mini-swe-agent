@@ -124,6 +124,14 @@ environment:
     TQDM_DISABLE: "1"
   environment_class: docker
 
+memory:
+  enabled: false
+  base_url: ""
+  timeout_seconds: 30
+  query_budget: 4000
+  enable_w2: false
+  api_key: "fsy_test_key_dev_only_12345678"
+
 model:
   observation_template: |
     {% if output.exception_info -%}
@@ -170,8 +178,32 @@ model:
 
     If you have completed your assignment, please consult the first message about how to
     submit your solution (you will not be able to continue working on this task after that).
-  model_name: "anthropic/claude-sonnet-4-5-20250929"
+  cost_tracking: "ignore_errors"
+  # model_name: "anthropic/claude-sonnet-4-5-20250929"
+  # model_kwargs:
+  #   drop_params: true
+  #   temperature: 0.0
+  #   parallel_tool_calls: true
+  # model_name: "openai/atom"
+  # model_kwargs:
+  #   drop_params: true
+  #   temperature: 0.0
+  #   parallel_tool_calls: true
+  #   api_base: "http://172.16.180.27:8080/llm/llmops/gateway/isgw/remote/llmops/MWH-REMOTE-SERVICE-d0d0d5uvt2npmotq3ajg/service/assetsmna/service-d4dc491fagrs76vq143g/8000/v1"
+  #   api_key: "apikey-vDxy6GH0rGIYa5h6LoZiunB5Jwz7A-88LhXlqpqRCOXd"
+  
+  # model_name: "openai/glm-5.1"
+  # model_kwargs:
+  #   drop_params: true
+  #   temperature: 0.8
+  #   parallel_tool_calls: true
+  #   api_base: "https://open.bigmodel.cn/api/coding/paas/v4"
+  #   api_key: "7e8964900f8099b25671ff72f105c4e8.JodgWtIlNh3fIuXl"
+
+  model_name: "openai/glm-5.1"
   model_kwargs:
     drop_params: true
-    temperature: 0.0
+    temperature: 0.8
     parallel_tool_calls: true
+    api_base: "http://172.17.120.11:9091/vibecoding/v1"
+    api_key: "haojun.fan:transwarp123"

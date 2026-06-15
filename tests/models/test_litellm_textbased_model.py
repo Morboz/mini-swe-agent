@@ -95,6 +95,7 @@ def test_litellm_model_cost_tracking_ignore_errors():
         }
         mock_response.choices = [Mock(message=mock_message)]
         mock_response.model_dump.return_value = {"test": "response"}
+        mock_response.usage = Mock(prompt_tokens=10, completion_tokens=5, total_tokens=15)
         mock_completion.return_value = mock_response
 
         with patch("litellm.cost_calculator.completion_cost", side_effect=ValueError("Model not found")):

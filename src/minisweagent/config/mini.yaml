@@ -143,5 +143,7 @@ model:
 
     If you want to end the task, please issue the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`
     without any other command.
+  model_name: "atom"
   model_kwargs:
-    drop_params: true
+    api_base: "http://172.16.180.27:8080/llm/llmops/gateway/isgw/remote/llmops/MWH-REMOTE-SERVICE-d0d0d5uvt2npmotq3ajg/service/assetsmna/service-d4dc491fagrs76vq143g/8000/v1"
+    api_key: "apikey-vDxy6GH0rGIYa5h6LoZiunB5Jwz7A"
