@@ -1,11 +1,13 @@
+import logging
 import re
 from unittest.mock import patch
 
 import pytest
 
 from minisweagent import package_dir
+from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
 from minisweagent.models.test_models import DeterministicModel, make_output
-from minisweagent.run.benchmarks.swebench_single import main
+from minisweagent.run.benchmarks.swebench_single import SingleCaseProgressTrackingAgent, main
 
 
 def _make_model_from_fixture(text_outputs: list[str], cost_per_call: float = 1.0, **kwargs) -> DeterministicModel:
@@ -101,3 +103,109 @@ def test_swebench_single_end_to_end_exit_immediately(github_test_data, tmp_path,
         # Verify model was called with correct parameters
         mock_get_model.assert_called_once()
         assert output_path.exists()
+
+
+def test_swebench_single_uses_json_loader_for_jsonl_subset(tmp_path):
+    """Test that swebench_single accepts a JSONL dataset path."""
+    dataset_path = tmp_path / "custom.jsonl"
+    dataset_path.write_text('{"instance_id":"demo__repo-1","problem_statement":"Fix it"}\n')
+
+    with (
+        patch("minisweagent.run.benchmarks.swebench_single.load_swebench_dataset") as mock_load_dataset,
+        patch("minisweagent.run.benchmarks.swebench_single.get_sb_environment") as mock_get_env,
+        patch("minisweagent.run.benchmarks.swebench_single.get_model") as mock_get_model,
+        patch("minisweagent.run.benchmarks.swebench_single.get_agent") as mock_get_agent,
+    ):
+        mock_load_dataset.return_value = [{"instance_id": "demo__repo-1", "problem_statement": "Fix it"}]
+        mock_agent = mock_get_agent.return_value
+
+        main(
+            subset=str(dataset_path),
+            split="train",
+            instance_spec="demo__repo-1",
+            model_name="deterministic",
+            config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
+            environment_class="docker",
+            exit_immediately=True,
+            output=tmp_path / "traj.json",
+            model_class=None,
+            agent_class="interactive",
+            yolo=False,
+            cost_limit=None,
+        )
+
+        mock_load_dataset.assert_called_once_with(str(dataset_path), split="train")
+        mock_get_env.assert_called_once()
+        mock_get_model.assert_called_once()
+        mock_get_agent.assert_called_once()
+        mock_agent.run.assert_called_once_with("Fix it", instance_id="demo__repo-1")
+
+
+def test_swebench_single_uses_memory_bootstrap_agent_when_memory_enabled(tmp_path):
+    """Test that swebench_single routes memory config to the memory bootstrap agent."""
+    dataset_path = tmp_path / "custom.jsonl"
+    dataset_path.write_text('{"instance_id":"demo__repo-1","problem_statement":"Fix it"}\n')
+
+    with (
+        patch("minisweagent.run.benchmarks.swebench_single.load_swebench_dataset") as mock_load_dataset,
+        patch("minisweagent.run.benchmarks.swebench_single.get_sb_environment") as mock_get_env,
+        patch("minisweagent.run.benchmarks.swebench_single.get_model") as mock_get_model,
+        patch("minisweagent.run.benchmarks.swebench_single.SingleCaseProgressTrackingAgent") as mock_agent_cls,
+    ):
+        mock_load_dataset.return_value = [{"instance_id": "demo__repo-1", "problem_statement": "Fix it"}]
+        mock_agent = mock_agent_cls.return_value
+
+        main(
+            subset=str(dataset_path),
+            split="train",
+            instance_spec="demo__repo-1",
+            model_name="deterministic",
+            config_spec=[
+                str(package_dir / "config" / "benchmarks" / "swebench.yaml"),
+                "memory.enabled=true",
+                "memory.base_url=http://memory",
+                "memory.query_budget=321",
+            ],
+            environment_class="docker",
+            exit_immediately=True,
+            output=tmp_path / "traj.json",
+            model_class=None,
+            agent_class=None,
+            yolo=False,
+            cost_limit=None,
+        )
+
+        mock_agent_cls.assert_called_once()
+        args, kwargs = mock_agent_cls.call_args
+        assert kwargs["memory"]["enabled"] is True
+        assert kwargs["memory"]["base_url"] == "http://memory"
+        assert kwargs["memory"]["query_budget"] == 321
+        mock_get_env.assert_called_once()
+        mock_get_model.assert_called_once()
+        mock_agent.run.assert_called_once_with("Fix it", instance_id="demo__repo-1")
+
+
+def test_single_case_progress_tracking_agent_logs_step_progress(caplog):
+    model = DeterministicModel(outputs=[make_output("done", [], cost=0.25)], cost_per_call=0.25)
+
+    class _Env:
+        def execute(self, action):
+            return {"output": "", "returncode": 0, "exception_info": ""}
+
+        def get_template_vars(self):
+            return {}
+
+        def serialize(self):
+            return {}
+
+    with caplog.at_level(logging.INFO):
+        agent = SingleCaseProgressTrackingAgent(
+            model,
+            _Env(),
+            system_template="system",
+            instance_template="{{ task }}",
+        )
+        with patch.object(MemoryBootstrapAgent, "step", return_value=[]):
+            agent.step()
+
+    assert "Step   1 ($0.00)" in caplog.text

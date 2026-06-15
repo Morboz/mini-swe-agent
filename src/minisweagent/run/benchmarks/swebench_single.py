@@ -7,11 +7,14 @@ from datasets import load_dataset
 
 from minisweagent import global_config_dir
 from minisweagent.agents import get_agent
+from minisweagent.agents.context_tool_agent import ContextToolAgent
+from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
 from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.models import get_model
 from minisweagent.run.benchmarks.swebench import (
     DATASET_MAPPING,
     get_sb_environment,
+    load_swebench_dataset,
 )
 from minisweagent.utils.log import logger
 from minisweagent.utils.serialize import UNSET, recursive_merge
@@ -38,6 +41,27 @@ Examples:
 """
 
 
+class SingleCaseProgressTrackingAgent(MemoryBootstrapAgent):
+    """Single-case agent wrapper that logs step progress to the console."""
+
+    def step(self) -> dict:
+        logger.info(f"Step {self.n_calls + 1:3d} (${self.cost:.2f})")
+        return super().step()
+
+    def _bootstrap_memory(self) -> None:
+        logger.info("Bootstrapping memory...")
+        super()._bootstrap_memory()
+        logger.info("Memory bootstrap finished")
+
+
+class SingleCaseContextToolAgent(ContextToolAgent):
+    """Single-case agent wrapper with context tools that logs step progress."""
+
+    def step(self) -> dict:
+        logger.info(f"Step {self.n_calls + 1:3d} (${self.cost:.2f})")
+        return super().step()
+
+
 # fmt: off
 @app.command()
 def main(
@@ -58,10 +82,7 @@ def main(
     """Run on a single SWE-Bench instance."""
     dataset_path = DATASET_MAPPING.get(subset, subset)
     logger.info(f"Loading dataset from {dataset_path}, split {split}...")
-    instances = {
-        inst["instance_id"]: inst  # type: ignore
-        for inst in load_dataset(dataset_path, split=split)
-    }
+    instances = {inst["instance_id"]: inst for inst in load_swebench_dataset(dataset_path, split=split)}  # type: ignore
     if instance_spec.isnumeric():
         instance_spec = sorted(instances.keys())[int(instance_spec)]
     instance: dict = instances[instance_spec]  # type: ignore
@@ -87,13 +108,39 @@ def main(
     config = recursive_merge(*configs)
 
     env = get_sb_environment(config, instance)
-    agent = get_agent(
-        get_model(config=config.get("model", {})),
-        env,
-        config.get("agent", {}),
-        default_type="interactive",
-    )
-    agent.run(instance["problem_statement"])
+    agent_config = config.get("agent", {}).copy()
+    memory_config = config.get("memory", {})
+    if memory_config.get("enabled"):
+        agent_config.setdefault("agent_class", "memory_bootstrap")
+        if agent_config.get("agent_class") == "memory_bootstrap":
+            agent_config["memory"] = memory_config
+    agent_class_name = agent_config.get("agent_class")
+    if agent_class_name in [None, "memory_bootstrap"]:
+        if agent_class_name == "memory_bootstrap":
+            agent_config = agent_config.copy()
+            agent_config.pop("agent_class", None)
+        agent = SingleCaseProgressTrackingAgent(
+            get_model(config=config.get("model", {})),
+            env,
+            **agent_config,
+        )
+    elif agent_class_name == "context_tool":
+        agent_config = agent_config.copy()
+        agent_config.pop("agent_class", None)
+        agent_config["memory"] = memory_config
+        agent = SingleCaseContextToolAgent(
+            get_model(config=config.get("model", {})),
+            env,
+            **agent_config,
+        )
+    else:
+        agent = get_agent(
+            get_model(config=config.get("model", {})),
+            env,
+            agent_config,
+            default_type="interactive",
+        )
+    agent.run(instance["problem_statement"], instance_id=instance["instance_id"])
 
 
 if __name__ == "__main__":

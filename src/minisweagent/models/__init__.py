@@ -42,6 +42,34 @@ class GlobalModelStats:
 GLOBAL_MODEL_STATS = GlobalModelStats()
 
 
+def normalize_usage(usage_source) -> dict[str, int]:
+    """Normalize provider-specific usage payloads into prompt/completion/total token counts."""
+    if usage_source is None:
+        usage = {}
+    elif isinstance(usage_source, dict) and "usage" in usage_source:
+        usage = usage_source.get("usage") or {}
+    elif isinstance(usage_source, dict):
+        usage = usage_source
+    else:
+        usage = getattr(usage_source, "usage", usage_source)
+
+    def _read(name: str, *fallbacks: str) -> int:
+        for key in (name, *fallbacks):
+            if isinstance(usage, dict):
+                value = usage.get(key)
+            else:
+                value = getattr(usage, key, None)
+            if value is not None:
+                return int(value)
+        return 0
+
+    return {
+        "prompt_tokens": _read("prompt_tokens", "input_tokens"),
+        "completion_tokens": _read("completion_tokens", "output_tokens"),
+        "total_tokens": _read("total_tokens"),
+    }
+
+
 def get_model(input_model_name: str | None = None, config: dict | None = None) -> Model:
     """Get an initialized model object from any kind of user input or settings."""
     resolved_model_name = get_model_name(input_model_name, config)

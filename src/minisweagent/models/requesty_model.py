@@ -7,7 +7,7 @@ from typing import Any, Literal
 import requests
 from pydantic import BaseModel
 
-from minisweagent.models import GLOBAL_MODEL_STATS
+from minisweagent.models import GLOBAL_MODEL_STATS, normalize_usage
 from minisweagent.models.utils.actions_toolcall import (
     BASH_TOOL,
     format_toolcall_observation_messages,
@@ -108,6 +108,7 @@ class RequestyModel:
         message["extra"] = {
             "actions": self._parse_actions(response),
             "response": response,
+            "usage": normalize_usage(response),
             **cost_output,
             "timestamp": time.time(),
         }

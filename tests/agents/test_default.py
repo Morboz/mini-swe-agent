@@ -423,3 +423,50 @@ def test_empty_actions_handling(model_factory):
     assert info["exit_status"] == "Submitted"
     assert info["submission"] == "done\n"
     assert agent.n_calls == 2
+
+
+def test_serialize_includes_usage_totals(default_config):
+    model = DeterministicModel(
+        outputs=[
+            {
+                "role": "assistant",
+                "content": "done",
+                "extra": {
+                    "actions": [{"command": "echo 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'\necho 'done'"}],
+                    "cost": 1.0,
+                    "timestamp": 1.0,
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+                },
+            }
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **default_config)
+
+    info = agent.run("usage task")
+
+    assert info["exit_status"] == "Submitted"
+    data = agent.serialize()
+    assert data["info"]["model_stats"]["prompt_tokens"] == 10
+    assert data["info"]["model_stats"]["completion_tokens"] == 4
+    assert data["info"]["model_stats"]["total_tokens"] == 14
+
+
+def test_serialize_includes_memory_info(default_config):
+    agent = DefaultAgent(
+        model=DeterministicModel(
+            outputs=[
+                make_output(
+                    "done",
+                    [{"command": "echo 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'\necho 'done'"}],
+                )
+            ]
+        ),
+        env=LocalEnvironment(),
+        **default_config,
+    )
+    agent.extra_template_vars["memory_info"] = {"enabled": True, "repo_id": "repo__1", "context_chars": 123}
+
+    agent.run("memory task")
+    data = agent.serialize()
+
+    assert data["info"]["memory"] == {"enabled": True, "repo_id": "repo__1", "context_chars": 123}

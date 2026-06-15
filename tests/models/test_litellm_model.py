@@ -62,6 +62,29 @@ class TestLitellmModel:
         with pytest.raises(FormatError):
             model.query([{"role": "user", "content": "test"}])
 
+    @patch("minisweagent.models.litellm_model.litellm.completion")
+    @patch("minisweagent.models.litellm_model.litellm.cost_calculator.completion_cost")
+    def test_query_includes_normalized_usage(self, mock_cost, mock_completion):
+        tool_call = MagicMock()
+        tool_call.function.name = "bash"
+        tool_call.function.arguments = '{"command": "ls -la"}'
+        tool_call.id = "call_usage"
+        response = _mock_litellm_response([tool_call])
+        response.usage.prompt_tokens = 11
+        response.usage.completion_tokens = 5
+        response.usage.total_tokens = 16
+        mock_completion.return_value = response
+        mock_cost.return_value = 0.001
+
+        model = LitellmModel(model_name="gpt-4")
+        result = model.query([{"role": "user", "content": "list files"}])
+
+        assert result["extra"]["usage"] == {
+            "prompt_tokens": 11,
+            "completion_tokens": 5,
+            "total_tokens": 16,
+        }
+
     def test_format_observation_messages(self):
         model = LitellmModel(model_name="gpt-4", observation_template="{{ output.output }}")
         message = {"extra": {"actions": [{"command": "echo test", "tool_call_id": "call_1"}]}}

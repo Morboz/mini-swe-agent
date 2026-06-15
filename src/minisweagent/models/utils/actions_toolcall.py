@@ -26,6 +26,56 @@ BASH_TOOL = {
     },
 }
 
+CONTEXT_SEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "context_search",
+        "description": "Search Formsy repository context for task-relevant code, symbols, tests, and prior observations",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query — keywords, symbols, file paths, errors, or API names",
+                },
+                "budget": {
+                    "type": "integer",
+                    "description": "Budget for the search (default 4000)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+CONTEXT_READ_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "context_read",
+        "description": "Read source content from the Formsy repository context store by path and optional line range",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Repository-relative file path to read",
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "Start line (1-based, inclusive)",
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "End line (1-based, inclusive)",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+}
+
+KNOWN_TOOLS = {"bash", "context_search", "context_read"}
+
 
 def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> list[dict]:
     """Parse tool calls from the response. Raises FormatError if unknown tool or invalid args."""
@@ -42,16 +92,28 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
         )
     actions = []
     for tool_call in tool_calls:
+        tool_name = tool_call.function.name
         error_msg = ""
         args = {}
         try:
             args = json.loads(tool_call.function.arguments)
         except Exception as e:
             error_msg = f"Error parsing tool call arguments: {e}."
-        if tool_call.function.name != "bash":
-            error_msg += f"Unknown tool '{tool_call.function.name}'."
-        if not isinstance(args, dict) or "command" not in args:
-            error_msg += "Missing 'command' argument in bash tool call."
+
+        if tool_name not in KNOWN_TOOLS:
+            error_msg += f"Unknown tool '{tool_name}'."
+
+        if not error_msg:
+            if tool_name == "bash":
+                if not isinstance(args, dict) or "command" not in args:
+                    error_msg += "Missing 'command' argument in bash tool call."
+            elif tool_name == "context_search":
+                if not isinstance(args, dict) or "query" not in args:
+                    error_msg += "Missing 'query' argument in context_search tool call."
+            elif tool_name == "context_read":
+                if not isinstance(args, dict) or "path" not in args:
+                    error_msg += "Missing 'path' argument in context_read tool call."
+
         if error_msg:
             raise FormatError(
                 {
@@ -62,7 +124,21 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
                     "extra": {"interrupt_type": "FormatError"},
                 }
             )
-        actions.append({"command": args["command"], "tool_call_id": tool_call.id})
+
+        action: dict = {"tool": tool_name, "tool_call_id": tool_call.id}
+        if tool_name == "bash":
+            action["command"] = args["command"]
+        elif tool_name == "context_search":
+            action["query"] = args["query"]
+            if "budget" in args:
+                action["budget"] = args["budget"]
+        elif tool_name == "context_read":
+            action["path"] = args["path"]
+            if "start_line" in args:
+                action["start_line"] = args["start_line"]
+            if "end_line" in args:
+                action["end_line"] = args["end_line"]
+        actions.append(action)
     return actions
 
 
@@ -79,8 +155,15 @@ def format_toolcall_observation_messages(
     padded_outputs = outputs + [not_executed] * (len(actions) - len(outputs))
     results = []
     for action, output in zip(actions, padded_outputs):
+        # Ensure all fields referenced by observation templates exist.
+        # Non-bash tools (context_search, context_read) may not set these.
+        render_output = {
+            "output": output.get("output", ""),
+            "returncode": output.get("returncode", 0),
+            "exception_info": output.get("exception_info", None),
+        }
         content = Template(observation_template, undefined=StrictUndefined).render(
-            output=output, **(template_vars or {})
+            output=render_output, **(template_vars or {})
         )
         msg = {
             "content": content,

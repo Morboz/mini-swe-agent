@@ -13,11 +13,13 @@ import traceback
 from pathlib import Path
 
 import typer
+from datasets import load_dataset
 from jinja2 import StrictUndefined, Template
 from rich.live import Live
 
 from minisweagent import Environment
-from minisweagent.agents.default import DefaultAgent
+from minisweagent.agents.context_tool_agent import ContextToolAgent
+from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
 from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.environments import get_environment
 from minisweagent.models import get_model
@@ -65,8 +67,22 @@ app = typer.Typer(rich_markup_mode="rich", add_completion=False)
 _OUTPUT_FILE_LOCK = threading.Lock()
 
 
-class ProgressTrackingAgent(DefaultAgent):
+class ProgressTrackingAgent(MemoryBootstrapAgent):
     """Simple wrapper around DefaultAgent that provides progress updates."""
+
+    def __init__(self, *args, progress_manager: RunBatchProgressManager, instance_id: str = "", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.progress_manager: RunBatchProgressManager = progress_manager
+        self.instance_id = instance_id
+
+    def step(self) -> dict:
+        """Override step to provide progress updates."""
+        self.progress_manager.update_instance_status(self.instance_id, f"Step {self.n_calls + 1:3d} (${self.cost:.2f})")
+        return super().step()
+
+
+class ProgressTrackingContextToolAgent(ContextToolAgent):
+    """ContextToolAgent wrapper that provides progress updates."""
 
     def __init__(self, *args, progress_manager: RunBatchProgressManager, instance_id: str = "", **kwargs):
         super().__init__(*args, **kwargs)
@@ -106,6 +122,13 @@ def get_sb_environment(config: dict, instance: dict) -> Environment:
         if out["returncode"] != 0:
             raise RuntimeError(f"Error executing startup command: {out}")
     return env
+
+
+def load_swebench_dataset(dataset_path: str, *, split: str):
+    """Load a SWEBench dataset from HF Hub, a dataset directory, or a JSON/JSONL file."""
+    if dataset_path.endswith((".json", ".jsonl")):
+        return load_dataset("json", data_files=dataset_path, split=split)
+    return load_dataset(dataset_path, split=split)
 
 
 def update_preds_file(output_path: Path, instance_id: str, model_name: str, result: str):
@@ -158,14 +181,26 @@ def process_instance(
 
     try:
         env = get_sb_environment(config, instance)
-        agent = ProgressTrackingAgent(
-            model,
-            env,
-            progress_manager=progress_manager,
-            instance_id=instance_id,
-            **config.get("agent", {}),
-        )
-        info = agent.run(task)
+        agent_class_name = config.get("agent", {}).get("agent_class", "")
+        if agent_class_name == "context_tool":
+            agent = ProgressTrackingContextToolAgent(
+                model,
+                env,
+                progress_manager=progress_manager,
+                instance_id=instance_id,
+                memory=config.get("memory", {}),
+                **config.get("agent", {}),
+            )
+        else:
+            agent = ProgressTrackingAgent(
+                model,
+                env,
+                progress_manager=progress_manager,
+                instance_id=instance_id,
+                memory=config.get("memory", {}),
+                **config.get("agent", {}),
+            )
+        info = agent.run(task, instance_id=instance_id)
         exit_status = info.get("exit_status")
         result = info.get("submission")
     except Exception as e:
@@ -233,11 +268,9 @@ def main(
     logger.info(f"Results will be saved to {output_path}")
     add_file_handler(output_path / "minisweagent.log")
 
-    from datasets import load_dataset
-
     dataset_path = DATASET_MAPPING.get(subset, subset)
     logger.info(f"Loading dataset {dataset_path}, split {split}...")
-    instances = list(load_dataset(dataset_path, split=split))
+    instances = list(load_swebench_dataset(dataset_path, split=split))
 
     instances = filter_instances(instances, filter_spec=filter_spec, slice_spec=slice_spec, shuffle=shuffle)
     if not redo_existing and (output_path / "preds.json").exists():

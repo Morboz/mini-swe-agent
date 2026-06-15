@@ -10,7 +10,9 @@ from minisweagent.models.test_models import DeterministicModel, make_output
 from minisweagent.run.benchmarks.swebench import (
     filter_instances,
     get_swebench_docker_image_name,
+    load_swebench_dataset,
     main,
+    process_instance,
     remove_from_preds_file,
     update_preds_file,
 )
@@ -101,6 +103,26 @@ def test_get_image_name_with_complex_instance_id():
     instance = {"instance_id": "project__sub__module__version__1.2.3"}
     expected = "docker.io/swebench/sweb.eval.x86_64.project_1776_sub_1776_module_1776_version_1776_1.2.3:latest"
     assert get_swebench_docker_image_name(instance) == expected
+
+
+def test_load_swebench_dataset_uses_json_loader_for_jsonl_file():
+    """Test that JSONL files are loaded via the datasets JSON builder."""
+    dataset_path = "/tmp/custom-swebench.jsonl"
+
+    with patch("minisweagent.run.benchmarks.swebench.load_dataset") as mock_load_dataset:
+        load_swebench_dataset(dataset_path, split="train")
+
+    mock_load_dataset.assert_called_once_with("json", data_files=dataset_path, split="train")
+
+
+def test_load_swebench_dataset_uses_path_loader_for_named_dataset():
+    """Test that normal dataset names keep the old loading behavior."""
+    dataset_path = "princeton-nlp/SWE-Bench_Lite"
+
+    with patch("minisweagent.run.benchmarks.swebench.load_dataset") as mock_load_dataset:
+        load_swebench_dataset(dataset_path, split="dev")
+
+    mock_load_dataset.assert_called_once_with(dataset_path, split="dev")
 
 
 def test_filter_instances_no_filters():
@@ -307,6 +329,99 @@ def test_remove_from_preds_file_no_file(tmp_path):
 
     # File should still not exist
     assert not output_path.exists()
+
+
+def test_process_instance_passes_instance_id_to_agent_run(tmp_path):
+    instance = {"instance_id": "repo__1", "problem_statement": "fix it"}
+    config = {"agent": {}, "model": {}}
+
+    class _Progress:
+        def on_instance_start(self, instance_id):
+            pass
+
+        def update_instance_status(self, instance_id, message):
+            pass
+
+        def on_instance_end(self, instance_id, exit_status):
+            pass
+
+    class _Model:
+        class config:
+            model_name = "fake-model"
+
+    class _Agent:
+        init_calls = []
+        run_calls = []
+
+        def __init__(self, model, env, progress_manager, instance_id, **kwargs):
+            self.model = model
+            self.env = env
+            self.progress_manager = progress_manager
+            self.instance_id = instance_id
+            _Agent.init_calls.append(instance_id)
+
+        def run(self, task, **kwargs):
+            _Agent.run_calls.append((task, kwargs))
+            return {"exit_status": "Submitted", "submission": "patch"}
+
+        def save(self, path, extra):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"messages": [], **extra}))
+
+    with (
+        patch("minisweagent.run.benchmarks.swebench.get_model", return_value=_Model()),
+        patch("minisweagent.run.benchmarks.swebench.get_sb_environment", return_value=object()),
+        patch("minisweagent.run.benchmarks.swebench.ProgressTrackingAgent", _Agent),
+    ):
+        process_instance(instance, tmp_path, config, _Progress())
+
+    assert _Agent.init_calls == ["repo__1"]
+    assert _Agent.run_calls == [("fix it", {"instance_id": "repo__1"})]
+
+
+def test_process_instance_passes_memory_config_to_agent(tmp_path):
+    instance = {"instance_id": "repo__1", "problem_statement": "fix it"}
+    config = {
+        "agent": {},
+        "model": {},
+        "memory": {"enabled": True, "base_url": "http://memory", "query_budget": 321},
+    }
+
+    class _Progress:
+        def on_instance_start(self, instance_id):
+            pass
+
+        def update_instance_status(self, instance_id, message):
+            pass
+
+        def on_instance_end(self, instance_id, exit_status):
+            pass
+
+    class _Model:
+        class config:
+            model_name = "fake-model"
+
+    class _Agent:
+        init_kwargs = []
+
+        def __init__(self, model, env, progress_manager, instance_id, **kwargs):
+            _Agent.init_kwargs.append(kwargs)
+
+        def run(self, task, **kwargs):
+            return {"exit_status": "Submitted", "submission": "patch"}
+
+        def save(self, path, extra):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"messages": [], **extra}))
+
+    with (
+        patch("minisweagent.run.benchmarks.swebench.get_model", return_value=_Model()),
+        patch("minisweagent.run.benchmarks.swebench.get_sb_environment", return_value=object()),
+        patch("minisweagent.run.benchmarks.swebench.ProgressTrackingAgent", _Agent),
+    ):
+        process_instance(instance, tmp_path, config, _Progress())
+
+    assert _Agent.init_kwargs == [{"memory": {"enabled": True, "base_url": "http://memory", "query_budget": 321}}]
 
 
 @pytest.mark.slow

@@ -41,6 +41,7 @@ class DefaultAgent:
         self.logger = logging.getLogger("agent")
         self.cost = 0.0
         self.n_calls = 0
+        self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def get_template_vars(self, **kwargs) -> dict:
         return recursive_merge(
@@ -113,6 +114,9 @@ class DefaultAgent:
         self.n_calls += 1
         message = self.model.query(self.messages)
         self.cost += message.get("extra", {}).get("cost", 0.0)
+        usage = message.get("extra", {}).get("usage", {})
+        for key in self.usage:
+            self.usage[key] += int(usage.get(key, 0) or 0)
         self.add_messages(message)
         return message
 
@@ -130,6 +134,7 @@ class DefaultAgent:
                 "model_stats": {
                     "instance_cost": self.cost,
                     "api_calls": self.n_calls,
+                    **self.usage,
                 },
                 "config": {
                     "agent": self.config.model_dump(mode="json"),
@@ -138,6 +143,7 @@ class DefaultAgent:
                 "mini_version": __version__,
                 "exit_status": last_extra.get("exit_status", ""),
                 "submission": last_extra.get("submission", ""),
+                "memory": self.extra_template_vars.get("memory_info", {"enabled": False}),
             },
             "messages": self.messages,
             "trajectory_format": "mini-swe-agent-1.1",

@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import litellm
 
-from minisweagent.models import GLOBAL_MODEL_STATS
+from minisweagent.models import GLOBAL_MODEL_STATS, normalize_usage
 from minisweagent.models.litellm_model import LitellmModel, LitellmModelConfig
 from minisweagent.models.utils.actions_toolcall_response import (
     BASH_TOOL_RESPONSE_API,
@@ -56,6 +56,7 @@ class LitellmResponseModel(LitellmModel):
         message = response.model_dump() if hasattr(response, "model_dump") else dict(response)
         message["extra"] = {
             "actions": self._parse_actions(response),
+            "usage": normalize_usage(response),
             **cost_output,
             "timestamp": time.time(),
         }

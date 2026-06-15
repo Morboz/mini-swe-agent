@@ -4,7 +4,7 @@ import time
 
 import requests
 
-from minisweagent.models import GLOBAL_MODEL_STATS
+from minisweagent.models import GLOBAL_MODEL_STATS, normalize_usage
 from minisweagent.models.openrouter_model import (
     OpenRouterAPIError,
     OpenRouterAuthenticationError,
@@ -89,6 +89,7 @@ class OpenRouterResponseModel(OpenRouterModel):
         message = dict(response)
         message["extra"] = {
             "actions": self._parse_actions(response),
+            "usage": normalize_usage(response),
             **cost_output,
             "timestamp": time.time(),
         }
