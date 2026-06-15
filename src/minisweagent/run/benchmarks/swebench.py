@@ -110,14 +110,19 @@ def get_sb_environment(config: dict, instance: dict) -> Environment:
     env_config = config.setdefault("environment", {})
     env_config["environment_class"] = env_config.get("environment_class", "docker")
     image_name = get_swebench_docker_image_name(instance)
-    # Compute the official SWE-bench image as a fallback when image_name comes from
-    # a custom registry (e.g. a private mirror) that may be unreachable.
+    # Compute a fallback image by replacing a custom registry with docker.io,
+    # keeping the same path/tag. e.g. docker.1panel.live/jefzda/img:tag -> docker.io/jefzda/img:tag
     fallback_image = None
-    if "image_name" in instance or "docker_image" in instance:
-        # image_name was taken from the dataset; compute the official image as fallback
-        iid = instance["instance_id"]
-        id_docker_compatible = iid.replace("__", "_1776_")
-        fallback_image = f"docker.io/swebench/sweb.eval.x86_64.{id_docker_compatible}:latest".lower()
+    if ("image_name" in instance or "docker_image" in instance) and image_name:
+        # A registry prefix is present if the image contains a '/' before the
+        # first ':' and the part before that '/' contains a '.' or ':' (indicating
+        # a hostname).  e.g. "docker.1panel.live/jefzda/img:tag" -> strip registry.
+        first_slash = image_name.index("/") if "/" in image_name else -1
+        first_colon = image_name.index(":") if ":" in image_name else len(image_name)
+        has_registry = first_slash > 0 and ("." in image_name[:first_slash] or ":" in image_name[:first_slash])
+        if has_registry:
+            path_without_registry = image_name[first_slash + 1 :]
+            fallback_image = "docker.io/" + path_without_registry
 
     if env_config["environment_class"] in ["docker", "swerex_modal"]:
         env_config["image"] = image_name
