@@ -51,15 +51,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          DATASET_PATH="datasets/${DATASET_ASSET}"
+          DATASET_PATH="/opt/miniswe-ci/datasets/${DATASET_ASSET}"
           if [ -f "${DATASET_PATH}" ]; then
             echo "Dataset already exists: ${DATASET_PATH} ($(wc -l < "${DATASET_PATH}") lines), skipping download"
           else
-            mkdir -p datasets
+            mkdir -p "$(dirname "${DATASET_PATH}")"
             gh release download "${DATASET_RELEASE_TAG}" \
               -R "${{ github.repository }}" \
               -p "${DATASET_ASSET}" \
-              --dir datasets --clobber
+              --dir "$(dirname "${DATASET_PATH}")"
             echo "Downloaded dataset: ${DATASET_PATH} ($(wc -l < "${DATASET_PATH}") lines)"
           fi
           echo "DATASET_PATH=${DATASET_PATH}" >> "$GITHUB_ENV"
