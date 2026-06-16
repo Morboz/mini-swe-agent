@@ -29,7 +29,7 @@ on:
       api_base:
         description: "模型 endpoint，默认 DeepSeek 官方；可覆盖成自建/网关地址"
         required: false
-        default: "https://api.deepseek.com"
+        default: "https://opencode.ai/zen/go/v1"
         type: string
 
 # subset/split 固定：数据集来自 release 里的 jsonl，split 固定为 train。
