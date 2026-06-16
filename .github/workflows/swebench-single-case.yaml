@@ -24,7 +24,7 @@ on:
       model_name:
         description: "litellm 模型名，默认 DeepSeek"
         required: false
-        default: "deepseek/deepseek-chat"
+        default: "openai/deepseek-v4-flash"
         type: string
       api_base:
         description: "模型 endpoint，默认 DeepSeek 官方；可覆盖成自建/网关地址"
@@ -41,7 +41,7 @@ env:
 
 jobs:
   run-case:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 90
     steps:
       - name: Checkout code
