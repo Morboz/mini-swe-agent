@@ -55,17 +55,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p datasets
-          gh release download "${DATASET_RELEASE_TAG}" \
-            -R "${{ github.repository }}" \
-            -p "${DATASET_ASSET}" \
-            --dir datasets --clobber
           DATASET_PATH="datasets/${DATASET_ASSET}"
-          echo "Downloaded dataset: ${DATASET_PATH} ($(wc -l < "${DATASET_PATH}") lines)"
+          if [ -f "${DATASET_PATH}" ]; then
+            echo "Dataset already exists: ${DATASET_PATH} ($(wc -l < "${DATASET_PATH}") lines), skipping download"
+          else
+            mkdir -p datasets
+            gh release download "${DATASET_RELEASE_TAG}" \
+              -R "${{ github.repository }}" \
+              -p "${DATASET_ASSET}" \
+              --dir datasets --clobber
+            echo "Downloaded dataset: ${DATASET_PATH} ($(wc -l < "${DATASET_PATH}") lines)"
+          fi
           echo "DATASET_PATH=${DATASET_PATH}" >> "$GITHUB_ENV"
 
       - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        run: command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Install mini-swe-agent
         run: uv pip install --python ${Python_ROOT_DIR} -e '.[full]'
