@@ -67,8 +67,17 @@ jobs:
       - name: Install uv
         run: command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 
+      - name: Create venv
+        run: |
+          VENV="/opt/miniswe-ci/.venv"
+          if [ ! -d "${VENV}" ]; then
+            uv venv --python 3.11 "${VENV}"
+          fi
+          echo "VENV=${VENV}" >> "$GITHUB_ENV"
+          echo "${VENV}/bin" >> "$GITHUB_PATH"
+
       - name: Install mini-swe-agent
-        run: uv pip install --python 3.11 -e '.[full]'
+        run: uv pip install -e '.[full]'
 
       - name: Write runtime model config
         # 把 model_name / api_base / api_key 合并写进 /tmp/runtime.yaml（api_key 是
