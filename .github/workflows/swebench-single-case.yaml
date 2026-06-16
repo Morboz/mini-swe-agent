@@ -47,10 +47,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-
       - name: Download dataset jsonl from release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -72,7 +68,7 @@ jobs:
         run: command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Install mini-swe-agent
-        run: uv pip install --python ${Python_ROOT_DIR} -e '.[full]'
+        run: uv pip install --python 3.11 -e '.[full]'
 
       - name: Write runtime model config
         # 把 model_name / api_base / api_key 合并写进 /tmp/runtime.yaml（api_key 是
