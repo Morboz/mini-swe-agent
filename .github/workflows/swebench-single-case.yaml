@@ -31,13 +31,21 @@ on:
         required: false
         default: "https://opencode.ai/zen/go/v1"
         type: string
+      skip_eval:
+        description: "跳过 evaluation 步骤（只跑 agent 不跑评测）"
+        required: false
+        default: "false"
+        type: boolean
 
 # subset/split 固定：数据集来自 release 里的 jsonl，split 固定为 train。
 env:
   MSWEA_CONFIGURED: "true"
   DATASET_RELEASE_TAG: "dataset-swe-bench-pro-ansible-v0.1"
   DATASET_ASSET: "swe-bench-pro-python-ansible.jsonl"
+  DATASET_CSV_ASSET: "swe-bench-pro-python-ansible.csv"
   DATASET_SPLIT: "train"
+  EVAL_REPO_URL: "https://github.com/Morboz/SWE-bench_Pro-os.git"
+  EVAL_DOCKERHUB_USERNAME: "jefzda"
 
 jobs:
   run-case:
@@ -63,6 +71,23 @@ jobs:
             echo "Downloaded dataset: ${DATASET_PATH} ($(wc -l < "${DATASET_PATH}") lines)"
           fi
           echo "DATASET_PATH=${DATASET_PATH}" >> "$GITHUB_ENV"
+
+      - name: Download dataset CSV from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATASET_CSV_PATH="/opt/miniswe-ci/datasets/${DATASET_CSV_ASSET}"
+          if [ -f "${DATASET_CSV_PATH}" ]; then
+            echo "Dataset CSV already exists: ${DATASET_CSV_PATH}, skipping download"
+          else
+            mkdir -p "$(dirname "${DATASET_CSV_PATH}")"
+            gh release download "${DATASET_RELEASE_TAG}" \
+              -R "${{ github.repository }}" \
+              -p "${DATASET_CSV_ASSET}" \
+              --dir "$(dirname "${DATASET_CSV_PATH}")"
+            echo "Downloaded dataset CSV: ${DATASET_CSV_PATH}"
+          fi
+          echo "DATASET_CSV_PATH=${DATASET_CSV_PATH}" >> "$GITHUB_ENV"
 
       - name: Install uv
         run: command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -144,6 +169,53 @@ jobs:
               print(f"instance={iid} patch_chars={len(patch)} -> {out_path}")
           PY
 
+      # ── Evaluation ──────────────────────────────────────────────────────
+      - name: Clone SWE-bench Pro eval repo
+        if: ${{ inputs.skip_eval != true }}
+        run: |
+          EVAL_REPO_DIR="/opt/miniswe-ci/SWE-bench_Pro-os"
+          if [ -d "${EVAL_REPO_DIR}" ]; then
+            echo "Eval repo already exists, pulling latest..."
+            cd "${EVAL_REPO_DIR}" && git pull --ff-only || true
+          else
+            git clone "${EVAL_REPO_URL}" "${EVAL_REPO_DIR}"
+          fi
+          echo "EVAL_REPO_DIR=${EVAL_REPO_DIR}" >> "$GITHUB_ENV"
+
+      - name: Install eval dependencies
+        if: ${{ inputs.skip_eval != true }}
+        run: |
+          uv pip install pandas tqdm docker
+
+      - name: Run SWE-bench Pro evaluation
+        if: ${{ inputs.skip_eval != true }}
+        env:
+          INSTANCE_ID: ${{ inputs.instance_id }}
+        run: |
+          set -euo pipefail
+          OUTPUT_DIR="runs/${INSTANCE_ID}"
+          EVAL_OUTPUT_DIR="${OUTPUT_DIR}/eval"
+
+          python "${EVAL_REPO_DIR}/swe_bench_pro_eval.py" \
+            --raw_sample_path="${DATASET_CSV_PATH}" \
+            --patch_path="${OUTPUT_DIR}/preds.json" \
+            --output_dir="${EVAL_OUTPUT_DIR}" \
+            --scripts_dir="${EVAL_REPO_DIR}/run_scripts" \
+            --num_workers=1 \
+            --dockerhub_username="${EVAL_DOCKERHUB_USERNAME}" \
+            --use_local_docker
+
+          # Print evaluation result summary
+          if [ -f "${EVAL_OUTPUT_DIR}/eval_results.json" ]; then
+            echo "===== Evaluation Results ====="
+            cat "${EVAL_OUTPUT_DIR}/eval_results.json"
+            echo ""
+            echo "=============================="
+          else
+            echo "::warning::eval_results.json not found — evaluation may have failed"
+          fi
+
+      # ── Upload ──────────────────────────────────────────────────────────
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
