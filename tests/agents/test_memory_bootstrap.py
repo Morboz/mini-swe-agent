@@ -1,82 +1,82 @@
+import httpx
 import pytest
 
+from minisweagent._vendor.formsy_sdk import SourceFile
 from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
 from minisweagent.environments.local import LocalEnvironment
 from minisweagent.models.test_models import DeterministicModel, make_output
 
 
-class _MemoryClient:
+class _FakeExploreResult:
+    def __init__(self, content):
+        self.content = content
+
+
+class _EvidenceClient:
+    """Stand-in for formsy_sdk.Client — records calls, returns shell objects."""
+
     def __init__(self):
-        self.compile_calls = []
-        self.query_calls = []
+        self.ingest_calls = []
+        self.explore_calls = []
 
-    def compile_repo(self, repo_id, files, *, metadata=None, revision=None, enable_w2=False):
-        self.compile_calls.append(
+    def ingest(self, repo_id, revision, files, *, source_type="code"):
+        self.ingest_calls.append({"repo_id": repo_id, "revision": revision, "files": list(files)})
+        return None
+
+    def explore(self, repo_id, revision, query, *, max_output_chars=None, **kwargs):
+        self.explore_calls.append(
             {
                 "repo_id": repo_id,
-                "files": files,
-                "metadata": metadata,
                 "revision": revision,
-                "enable_w2": enable_w2,
-            }
-        )
-        return {"repo_id": repo_id, "revision": "rev1", "parsed_file_count": len(files), "_latency_ms": 1}
-
-    def query_repo(self, repo_id, query, *, metadata=None, revision=None, budget=4000):
-        self.query_calls.append(
-            {
-                "repo_id": repo_id,
                 "query": query,
-                "metadata": metadata,
-                "revision": revision,
-                "budget": budget,
+                "max_output_chars": max_output_chars,
             }
         )
-        return {"repo_id": repo_id, "revision": "rev1", "query": query, "extra_context": "### ctx", "_latency_ms": 2}
+        return _FakeExploreResult("### ctx")
+
+
+_SUBMISSION = make_output(
+    "finish",
+    [{"command": "echo 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'\necho 'done'"}],
+)
 
 
 def test_memory_bootstrap_agent_injects_context_once(monkeypatch):
-    client = _MemoryClient()
+    client = _EvidenceClient()
     monkeypatch.setattr(
-        "minisweagent.agents.memory_bootstrap.extract_memory_source_files",
-        lambda env, cwd="": [{"path": "pkg/mod.py", "content": "x=1", "language": "python", "is_test": False}],
+        "minisweagent.agents.memory_bootstrap.extract_source_files",
+        lambda env, cwd="": [SourceFile(path="pkg/mod.py", content="x=1")],
+    )
+    monkeypatch.setattr(
+        "minisweagent.agents.memory_bootstrap.resolve_revision",
+        lambda env, cwd="": "deadbeef",
     )
 
     agent = MemoryBootstrapAgent(
-        model=DeterministicModel(
-            outputs=[
-                make_output(
-                    "finish",
-                    [{"command": "echo 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'\necho 'done'"}],
-                )
-            ]
-        ),
+        model=DeterministicModel(outputs=[_SUBMISSION]),
         env=LocalEnvironment(),
         system_template="sys",
         instance_template="task={{task}}",
-        memory={"enabled": True, "query_budget": 1234},
-        memory_client=client,
+        memory={"enabled": True, "max_output_chars": 1234},
+        evidence_client=client,
     )
 
     info = agent.run("issue text", instance_id="repo__1")
 
     assert info["exit_status"] == "Submitted"
-    assert client.compile_calls == [
+    assert client.ingest_calls == [
         {
             "repo_id": "repo__1",
-            "files": [{"path": "pkg/mod.py", "content": "x=1", "language": "python", "is_test": False}],
-            "metadata": {"instance_id": "repo__1"},
-            "revision": None,
-            "enable_w2": False,
+            "revision": "deadbeef",
+            "files": [SourceFile(path="pkg/mod.py", content="x=1")],
         }
     ]
-    assert client.query_calls == [
+    assert client.explore_calls == [
         {
             "repo_id": "repo__1",
+            "revision": "deadbeef",
             "query": "issue text",
-            "metadata": {"instance_id": "repo__1"},
-            "revision": "rev1",
-            "budget": 1234,
+            "max_output_chars": 1234,
         }
     ]
     assert agent.memory_state["bootstrapped"] is True
@@ -84,21 +84,28 @@ def test_memory_bootstrap_agent_injects_context_once(monkeypatch):
     assert agent.messages[3]["content"] == "### ctx"
 
 
-def test_memory_bootstrap_agent_aborts_on_query_failure(monkeypatch):
-    class _FailingClient(_MemoryClient):
-        def query_repo(self, repo_id, query, *, metadata=None, revision=None, budget=4000):
-            raise RuntimeError("query failed")
+def test_memory_bootstrap_agent_degrades_on_explore_failure(monkeypatch):
+    class _FailingClient(_EvidenceClient):
+        def explore(self, *args, **kwargs):
+            raise httpx.HTTPError("explore failed")
 
-    monkeypatch.setattr("minisweagent.agents.memory_bootstrap.extract_memory_source_files", lambda env, cwd="": [])
+    monkeypatch.setattr(
+        "minisweagent.agents.memory_bootstrap.extract_source_files", lambda env, cwd="": []
+    )
+    monkeypatch.setattr(
+        "minisweagent.agents.memory_bootstrap.resolve_revision", lambda env, cwd="": "deadbeef"
+    )
 
     agent = MemoryBootstrapAgent(
-        model=DeterministicModel(outputs=[]),
+        model=DeterministicModel(outputs=[_SUBMISSION]),
         env=LocalEnvironment(),
         system_template="sys",
         instance_template="task={{task}}",
         memory={"enabled": True},
-        memory_client=_FailingClient(),
+        evidence_client=_FailingClient(),
     )
 
-    with pytest.raises(RuntimeError, match="query failed"):
-        agent.run("issue text", instance_id="repo__1")
+    # Must NOT raise — degrades gracefully (no injected context), run completes.
+    info = agent.run("issue text", instance_id="repo__1")
+    assert info["exit_status"] == "Submitted"
+    assert agent.memory_state["bootstrapped"] is True

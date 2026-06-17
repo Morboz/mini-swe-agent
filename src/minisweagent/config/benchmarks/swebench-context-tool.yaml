@@ -138,19 +138,13 @@ environment:
     TQDM_DISABLE: "1"
   environment_class: docker
 
+# Formsy Evidence connection (see ADR-0004 in the Formsy repo). repo_id is the
+# SWE-bench instance_id; revision is resolved as `git rev-parse HEAD` of /testbed.
 memory:
-<<<<<<< Updated upstream
   enabled: true
-  base_url: "http://localhost:3001"
-  timeout_seconds: 300
-=======
-  enabled: false
-  base_url: ""
-  timeout_seconds: 30
->>>>>>> Stashed changes
-  query_budget: 4000
-  enable_w2: false
-  api_key: "fsy_test_key_dev_only_12345678"
+  base_url: "http://localhost:8000"   # Formsy Evidence API (was :3001 legacy gateway)
+  timeout_seconds: 300                # ingest runs pycodegraph index_all; can take minutes
+  max_output_chars: 4000              # explore output budget (was query_budget)
 
 model:
   observation_template: |
@@ -190,30 +184,14 @@ model:
 
     Here is general guidance on how to submit correct toolcalls:
 
-<<<<<<< Updated upstream
     Every response needs to use at least one of the available tools (bash, context_search, context_read).
 
     - Tool: bash — Arguments: {"command": "your_command_here"}
     - Tool: context_search — Arguments: {"query": "search terms"}
     - Tool: context_read — Arguments: {"path": "file/path.py"}
-=======
-    Every response needs to use the 'bash' tool at least once to execute commands.
-
-    Call the bash tool with your command as the argument:
-    - Tool: bash
-    - Arguments: {"command": "your_command_here"}
->>>>>>> Stashed changes
 
     If you have completed your assignment, please consult the first message about how to
     submit your solution (you will not be able to continue working on this task after that).
   cost_tracking: "ignore_errors"
-<<<<<<< Updated upstream
-=======
-  model_name: "openai/glm-5.1"
-  model_kwargs:
-    drop_params: true
-    temperature: 0.8
-    parallel_tool_calls: true
-    api_base: "http://172.17.120.11:9091/vibecoding/v1"
-    api_key: "haojun.fan:transwarp123"
->>>>>>> Stashed changes
+  # model_name / api_base / api_key are injected by the SWE-bench workflow via
+  # /tmp/runtime.yaml (-c merge); not hardcoded here.
