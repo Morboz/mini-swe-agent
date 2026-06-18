@@ -52,7 +52,7 @@ agent:
 
     ## Important Boundaries
 
-    - MODIFY: Regular source code files in /testbed (this is the working directory for all your subsequent commands)
+    - MODIFY: Regular source code files in /app (this is the working directory for all your subsequent commands)
     - DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)
 
     ## Command Execution Rules
@@ -127,7 +127,7 @@ agent:
   cost_limit: 3.
 
 environment:
-  cwd: "/testbed"
+  cwd: "/app"
   timeout: 60
   interpreter: ["bash", "-c"]
   env:
@@ -139,7 +139,7 @@ environment:
   environment_class: docker
 
 # Formsy Evidence connection (see ADR-0004 in the Formsy repo). repo_id is the
-# SWE-bench instance_id; revision is resolved as `git rev-parse HEAD` of /testbed.
+# SWE-bench pro instance_id; revision is resolved as `git rev-parse HEAD` of /app.
 memory:
   enabled: true
   base_url: "http://localhost:8000"   # Formsy Evidence API (was :3001 legacy gateway)
@@ -193,5 +193,5 @@ model:
     If you have completed your assignment, please consult the first message about how to
     submit your solution (you will not be able to continue working on this task after that).
   cost_tracking: "ignore_errors"
-  # model_name / api_base / api_key are injected by the SWE-bench workflow via
+  # model_name / api_base / api_key are injected by the SWE-bench pro workflow via
   # /tmp/runtime.yaml (-c merge); not hardcoded here.
