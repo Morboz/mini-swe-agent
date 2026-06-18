@@ -52,7 +52,20 @@ class MemoryBootstrapAgent(DefaultAgent):
             repo_id = self.extra_template_vars.get("instance_id", "")
             revision = resolve_revision(self.env, cwd=cwd)
             files = extract_source_files(self.env, cwd=cwd)
-            client.ingest(repo_id, revision, files)
+            self.logger.info(
+                "Evidence extract: %d files (%d bytes) from cwd=%s",
+                len(files), sum(len(f.content) for f in files), cwd,
+            )
+            ingest_resp = client.ingest(repo_id, revision, files)
+            self.logger.info(
+                "Evidence ingest %s %s@%s: indexed=%d nodes_created=%d edges_created=%d "
+                "refs=%d/%d duration=%dms (graph now: %d nodes / %d edges); success=%s",
+                "created" if ingest_resp.created else "replaced",
+                repo_id, revision,
+                ingest_resp.files_indexed, ingest_resp.nodes_created, ingest_resp.edges_created,
+                ingest_resp.refs_resolved, ingest_resp.refs_unresolved, ingest_resp.duration_ms,
+                ingest_resp.node_count, ingest_resp.edge_count, ingest_resp.success,
+            )
             result = client.explore(
                 repo_id,
                 revision,

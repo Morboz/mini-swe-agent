@@ -97,7 +97,20 @@ class ContextToolAgent(DefaultAgent):
             repo_id = self.extra_template_vars.get("instance_id", "")
             revision = resolve_revision(self.env, cwd=cwd)
             files = extract_source_files(self.env, cwd=cwd)
-            self._get_client().ingest(repo_id, revision, files)
+            self.logger.info(
+                "Evidence extract: %d files (%d bytes) from cwd=%s",
+                len(files), sum(len(f.content) for f in files), cwd,
+            )
+            resp = self._get_client().ingest(repo_id, revision, files)
+            self.logger.info(
+                "Evidence ingest %s %s@%s: indexed=%d nodes_created=%d edges_created=%d "
+                "refs=%d/%d duration=%dms (graph now: %d nodes / %d edges); success=%s",
+                "created" if resp.created else "replaced",
+                repo_id, revision,
+                resp.files_indexed, resp.nodes_created, resp.edges_created,
+                resp.refs_resolved, resp.refs_unresolved, resp.duration_ms,
+                resp.node_count, resp.edge_count, resp.success,
+            )
             self._repo_id = repo_id
             self._revision = revision
             self._ingest_ok = True
@@ -106,9 +119,6 @@ class ContextToolAgent(DefaultAgent):
                 "repo_id": repo_id,
                 "context_search_calls": 0,
             })
-            self.logger.info(
-                "Ingested evidence %s@%s (%d files)", repo_id, revision, len(files)
-            )
         except (httpx.HTTPError, FormsyEvidenceError) as e:
             self.logger.warning("Evidence ingest failed — degrading to bash-only: %s", e)
 
@@ -165,6 +175,9 @@ class ContextToolAgent(DefaultAgent):
             memory_info = self.extra_template_vars.get("memory_info")
             if isinstance(memory_info, dict):
                 memory_info["context_search_calls"] = memory_info.get("context_search_calls", 0) + 1
+            self.logger.info(
+                "context_search %r -> %d chars", query, len(result.content)
+            )
             return {
                 "output": result.content,
                 "returncode": 0,

@@ -12,6 +12,20 @@ class _FakeExploreResult:
         self.content = content
 
 
+class _FakeIngestResult:
+    def __init__(self):
+        self.created = True
+        self.success = True
+        self.files_indexed = 1
+        self.nodes_created = 2
+        self.edges_created = 1
+        self.refs_resolved = 0
+        self.refs_unresolved = 0
+        self.duration_ms = 5
+        self.node_count = 2
+        self.edge_count = 1
+
+
 class _EvidenceClient:
     """Stand-in for formsy_sdk.Client — records calls, returns shell objects."""
 
@@ -21,7 +35,7 @@ class _EvidenceClient:
 
     def ingest(self, repo_id, revision, files, *, source_type="code"):
         self.ingest_calls.append({"repo_id": repo_id, "revision": revision, "files": list(files)})
-        return None
+        return _FakeIngestResult()
 
     def explore(self, repo_id, revision, query, *, max_output_chars=None, **kwargs):
         self.explore_calls.append(
