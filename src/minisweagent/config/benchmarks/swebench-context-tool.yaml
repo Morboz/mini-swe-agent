@@ -25,26 +25,25 @@ agent:
 
     ## Available Tools
 
-    You have three tools:
+    You have two tools:
 
-    - **bash**: Execute a shell command (for directory exploration, editing, testing, patching)
+    - **bash**: Execute a shell command (for directory exploration, reading files, editing, testing, patching)
     - **context_search**: Search the repository context index for relevant code, symbols, and tests
-    - **context_read**: Read indexed source content by path and optional line range
 
     ## Code Context Retrieval Rules
 
-    Use **context_search** to find relevant code before reading or editing.
-    Use **context_read** to inspect specific files identified by context_search.
-    Use **bash** for directory exploration, editing, testing, and submission.
+    Use **context_search** to find relevant code, symbols, and file paths before broad searching.
+    Once context_search points you at specific files, use **bash** (sed, cat, head, tail) to inspect them.
+    Use **bash** for directory exploration, reading, editing, testing, and submission.
 
-    Do NOT use bash to read or search source-code contents (grep, cat, sed, head, tail on source files).
-    Instead, use context_search to locate relevant code and context_read to inspect it.
+    Avoid broad `grep`/`find`/`rg` sweeps across the whole tree before trying context_search — it is
+    faster and more targeted for locating the code relevant to this issue.
 
     ## Recommended Workflow
 
     1. Explore the directory and filenames with bash (ls, find, tree)
     2. Query source-code context with context_search using relevant symbols and keywords
-    3. Read specific files with context_read for detailed inspection
+    3. Read specific files with bash (sed, cat, head) for detailed inspection
     4. Create a script to reproduce the issue
     5. Edit the source code to resolve the issue
     6. Verify your fix works by running your script again
@@ -184,11 +183,10 @@ model:
 
     Here is general guidance on how to submit correct toolcalls:
 
-    Every response needs to use at least one of the available tools (bash, context_search, context_read).
+    Every response needs to use at least one of the available tools (bash, context_search).
 
     - Tool: bash — Arguments: {"command": "your_command_here"}
     - Tool: context_search — Arguments: {"query": "search terms"}
-    - Tool: context_read — Arguments: {"path": "file/path.py"}
 
     If you have completed your assignment, please consult the first message about how to
     submit your solution (you will not be able to continue working on this task after that).

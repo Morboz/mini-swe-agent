@@ -1,5 +1,11 @@
 # Design: ContextToolAgent
 
+> **Update (2026-06):** the `context_read` tool has been **removed**. It offered
+> no benefit over reading files with `bash` (sed/cat/head), so the agent now
+> exposes only `context_search` + `bash`. The `context_read` sections below are
+> kept as historical design record. See `ContextToolAgent` and
+> `swebench-context-tool.yaml`.
+
 ## Goal
 
 Create a new Agent class that injects `context_search` and `context_read` as LLM-callable tools, enabling dynamic Formsy context queries during the agent loop (not just a one-shot bootstrap). This is inspired by the OpenCode plugin's tool architecture in `plugin-opencode/src/plugin.ts` and `runtime.ts`.
