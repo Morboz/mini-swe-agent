@@ -21,6 +21,7 @@ label, so ``(repo_id=instance_id, revision=HEAD)`` is unique and idempotent.
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
 from minisweagent._vendor.formsy_sdk import SourceFile
@@ -42,25 +43,38 @@ class FormsyEvidenceError(RuntimeError):
 # One repo per agent run; keyed by the environment's cwd.
 _REVISION_CACHE: dict[str, str] = {}
 
+_LOGGER = logging.getLogger(__name__)
+# Fallback revision when /testbed is not a git checkout — some SWE-bench Pro
+# images install the repo rather than checking it out, so ``git rev-parse HEAD``
+# fails with "not a git repository". This is safe: repo_id (instance_id) is
+# already unique per case, so ``(repo_id, "unknown")`` is still a unique Evidence.
+_FALLBACK_REVISION = "unknown"
+
 
 def resolve_revision(env: "Environment", *, cwd: str = "") -> str:
     """Resolve the Evidence ``revision`` for the repo under test.
 
     Runs ``git rev-parse HEAD`` inside the environment and caches it per ``cwd``.
+    If the repo under test is not a git checkout (no ``.git``), falls back to
+    :data:`_FALLBACK_REVISION` and logs a warning — never raises.
     """
     if cwd and cwd in _REVISION_CACHE:
         return _REVISION_CACHE[cwd]
     result = env.execute({"command": "git rev-parse HEAD"}, cwd=cwd)
-    if result.get("returncode") != 0:
-        raise FormsyEvidenceError(
-            f"resolve_revision failed: {result.get('output', 'git rev-parse HEAD failed')}"
-        )
     output = (result.get("output", "") or "").strip()
-    # ``git rev-parse HEAD`` prints the sha (plus any stderr warnings, which land
-    # elsewhere); take the first whitespace token as the revision.
-    revision = output.split()[0] if output else ""
-    if not revision:
-        raise FormsyEvidenceError("resolve_revision: empty revision from git rev-parse HEAD")
+    if result.get("returncode") != 0 or not output:
+        _LOGGER.warning(
+            "resolve_revision: git rev-parse HEAD failed in %s (%s); "
+            "falling back to revision=%r",
+            cwd or "(default cwd)",
+            output or "no output",
+            _FALLBACK_REVISION,
+        )
+        revision = _FALLBACK_REVISION
+    else:
+        # ``git rev-parse HEAD`` prints the sha (plus any stderr warnings, which
+        # land elsewhere); take the first whitespace token as the revision.
+        revision = output.split()[0]
     if cwd:
         _REVISION_CACHE[cwd] = revision
     return revision

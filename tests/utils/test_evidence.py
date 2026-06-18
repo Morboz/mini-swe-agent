@@ -65,7 +65,8 @@ def test_resolve_revision_caches_per_cwd():
     assert len(env.calls) == 1
 
 
-def test_resolve_revision_raises_on_failure():
-    env = _DummyEnv("not a repo", returncode=1)
-    with pytest.raises(FormsyEvidenceError, match="resolve_revision"):
-        resolve_revision(env, cwd="/testbed")
+def test_resolve_revision_falls_back_when_git_fails():
+    # SWE-bench Pro /testbed is often not a git checkout — resolve_revision
+    # must fall back to a default string rather than fail the whole ingest.
+    env = _DummyEnv("fatal: not a git repository\n", returncode=1)
+    assert resolve_revision(env, cwd="/testbed") == "unknown"
