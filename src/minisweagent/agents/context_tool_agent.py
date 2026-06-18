@@ -1,17 +1,18 @@
-"""Agent with context_search and context_read tools backed by the Formsy Evidence API.
+"""Agent with a context_search tool backed by the Formsy Evidence API.
 
-This agent extends DefaultAgent by injecting two additional tools that the LLM
-can call during the agent loop:
+This agent extends DefaultAgent by injecting one additional tool the LLM can
+call during the agent loop:
 
 - ``context_search`` — Explore the Formsy Evidence for the repo under test
   (graph-ranked source for a natural-language query).
-- ``context_read`` — Read a staged source file by path and optional line range.
 
 The Evidence (``repo_id = instance_id``, ``revision = git HEAD``) is **ingested
 once, eagerly, on the agent's first step** (see ADR-0004 in the Formsy repo);
-``context_search`` / ``context_read`` then issue thin Explore / Read calls over
-the vendored ``formsy_sdk.Client``. If ingestion or any call fails, the agent
-degrades gracefully to bash-only rather than sinking the run.
+``context_search`` then issues a thin Explore call over the vendored
+``formsy_sdk.Client``. File reading is done with ``bash`` (sed/cat/head) — there
+is no dedicated read tool, since bash already reads files without overhead. If
+ingestion or any call fails, the agent degrades gracefully to bash-only rather
+than sinking the run.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import httpx
 
 from minisweagent._vendor.formsy_sdk import Client as FormsyClient
 from minisweagent.agents.default import AgentConfig, DefaultAgent
-from minisweagent.models.utils.actions_toolcall import CONTEXT_READ_TOOL, CONTEXT_SEARCH_TOOL
+from minisweagent.models.utils.actions_toolcall import CONTEXT_SEARCH_TOOL
 from minisweagent.utils.evidence import (
     FormsyEvidenceError,
     extract_source_files,
@@ -43,11 +44,11 @@ class ContextToolAgentConfig(AgentConfig):
 
 
 class ContextToolAgent(DefaultAgent):
-    """Agent with ``context_search`` and ``context_read`` tools.
+    """Agent with a ``context_search`` tool.
 
-    These tools let the LLM dynamically query the Formsy Evidence for the repo
+    This tool lets the LLM dynamically query the Formsy Evidence for the repo
     under test during the agent loop, instead of relying on a one-shot bootstrap
-    injection.
+    injection. File reading is done via ``bash``.
     """
 
     def __init__(
@@ -73,7 +74,7 @@ class ContextToolAgent(DefaultAgent):
 
         # Inject context tools into the model's tool list.
         if hasattr(model, "config") and hasattr(model.config, "extra_tools"):
-            model.config.extra_tools = [CONTEXT_SEARCH_TOOL, CONTEXT_READ_TOOL]
+            model.config.extra_tools = [CONTEXT_SEARCH_TOOL]
 
     # -- Eager ingestion -----------------------------------------------------
 
@@ -143,8 +144,6 @@ class ContextToolAgent(DefaultAgent):
                 outputs.append(self.env.execute(action))
             elif tool == "context_search":
                 outputs.append(self._execute_context_search(action))
-            elif tool == "context_read":
-                outputs.append(self._execute_context_read(action))
             else:
                 outputs.append({
                     "output": f"Unknown tool: {tool}",
@@ -188,81 +187,3 @@ class ContextToolAgent(DefaultAgent):
                 "output": f"context_search failed: {e}",
                 "returncode": 1,
             }
-
-    # -- context_read --------------------------------------------------------
-
-    def _execute_context_read(self, action: dict) -> dict[str, Any]:
-        """Read a staged source file by path and optional line range.
-
-        The Evidence index stores **repo-relative** paths, but the LLM frequently
-        passes absolute container paths it saw via bash (e.g. ``/app/lib/...``
-        or ``/testbed/lib/...``). We normalize: strip the leading slash, and on
-        404 retry with successive leading path components stripped (most-specific
-        candidate first). So ``/app/lib/ansible/x.py`` resolves to the indexed
-        ``lib/ansible/x.py``. The matched relative path is echoed in the header.
-        """
-        if not self._ingest_ok:
-            return {
-                "output": "context_read unavailable (evidence not ingested); use bash instead",
-                "returncode": 1,
-            }
-        raw_path = action.get("path", "")
-        start_line = action.get("start_line") or 1
-        end_line = action.get("end_line")
-        candidates = _read_path_candidates(raw_path)
-        line_suffix = f":{start_line}" if action.get("start_line") else ""
-        line_suffix += f"-{end_line}" if end_line else ""
-        last_error: Exception | None = None
-        for path in candidates:
-            try:
-                result = self._get_client().read_file(
-                    repo_id=self._repo_id,
-                    revision=self._revision,
-                    path=path,
-                    start_line=start_line,
-                    end_line=end_line,
-                )
-                header = f"{path}{line_suffix}\n\n"
-                truncation = "\n[truncated by Evidence server]" if result.truncated else ""
-                return {"output": header + result.content + truncation, "returncode": 0}
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                if e.response.status_code != 404:
-                    break  # non-404 HTTP error: stop retrying, degrade below
-                # 404: try the next (shorter) candidate
-            except (httpx.HTTPError, FormsyEvidenceError) as e:
-                last_error = e
-                break
-        self.logger.warning(
-            "context_read failed for %r (tried %s): %s", raw_path, candidates, last_error
-        )
-        return {
-            "output": (
-                f"context_read: '{raw_path}' not found in Evidence index "
-                f"(tried {candidates}). The index uses repo-relative paths — "
-                "use context_search to get the correct path."
-            ),
-            "returncode": 1,
-        }
-
-
-def _read_path_candidates(raw: str) -> list[str]:
-    """Normalized path candidates for a context_read path.
-
-    Strips the leading slash, then yields the path with 0, 1, 2 leading
-    components stripped (most-specific first). ``/app/lib/x.py`` →
-    ``["app/lib/x.py", "lib/x.py", "x.py"]``. The Evidence index is tried in
-    that order on 404.
-    """
-    p = (raw or "").strip().lstrip("/")
-    if not p:
-        return []
-    parts = p.split("/")
-    candidates: list[str] = []
-    seen: set[str] = set()
-    for i in range(min(len(parts), 3)):
-        cand = "/".join(parts[i:])
-        if cand and cand not in seen:
-            seen.add(cand)
-            candidates.append(cand)
-    return candidates

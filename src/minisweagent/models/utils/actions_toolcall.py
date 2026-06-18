@@ -48,33 +48,7 @@ CONTEXT_SEARCH_TOOL = {
     },
 }
 
-CONTEXT_READ_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "context_read",
-        "description": "Read source content from the Formsy repository context store by path and optional line range",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Repository-relative file path to read",
-                },
-                "start_line": {
-                    "type": "integer",
-                    "description": "Start line (1-based, inclusive)",
-                },
-                "end_line": {
-                    "type": "integer",
-                    "description": "End line (1-based, inclusive)",
-                },
-            },
-            "required": ["path"],
-        },
-    },
-}
-
-KNOWN_TOOLS = {"bash", "context_search", "context_read"}
+KNOWN_TOOLS = {"bash", "context_search"}
 
 
 def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> list[dict]:
@@ -110,9 +84,6 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
             elif tool_name == "context_search":
                 if not isinstance(args, dict) or "query" not in args:
                     error_msg += "Missing 'query' argument in context_search tool call."
-            elif tool_name == "context_read":
-                if not isinstance(args, dict) or "path" not in args:
-                    error_msg += "Missing 'path' argument in context_read tool call."
 
         if error_msg:
             raise FormatError(
@@ -132,12 +103,6 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
             action["query"] = args["query"]
             if "budget" in args:
                 action["budget"] = args["budget"]
-        elif tool_name == "context_read":
-            action["path"] = args["path"]
-            if "start_line" in args:
-                action["start_line"] = args["start_line"]
-            if "end_line" in args:
-                action["end_line"] = args["end_line"]
         actions.append(action)
     return actions
 
@@ -156,7 +121,7 @@ def format_toolcall_observation_messages(
     results = []
     for action, output in zip(actions, padded_outputs):
         # Ensure all fields referenced by observation templates exist.
-        # Non-bash tools (context_search, context_read) may not set these.
+        # Non-bash tools (e.g. context_search) may not set these.
         render_output = {
             "output": output.get("output", ""),
             "returncode": output.get("returncode", 0),
