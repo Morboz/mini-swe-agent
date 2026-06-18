@@ -179,34 +179,77 @@ class ContextToolAgent(DefaultAgent):
     # -- context_read --------------------------------------------------------
 
     def _execute_context_read(self, action: dict) -> dict[str, Any]:
-        """Read a staged source file by path and optional line range."""
+        """Read a staged source file by path and optional line range.
+
+        The Evidence index stores **repo-relative** paths, but the LLM frequently
+        passes absolute container paths it saw via bash (e.g. ``/app/lib/...``
+        or ``/testbed/lib/...``). We normalize: strip the leading slash, and on
+        404 retry with successive leading path components stripped (most-specific
+        candidate first). So ``/app/lib/ansible/x.py`` resolves to the indexed
+        ``lib/ansible/x.py``. The matched relative path is echoed in the header.
+        """
         if not self._ingest_ok:
             return {
                 "output": "context_read unavailable (evidence not ingested); use bash instead",
                 "returncode": 1,
             }
-        path = action.get("path", "")
+        raw_path = action.get("path", "")
         start_line = action.get("start_line") or 1
         end_line = action.get("end_line")
-        try:
-            result = self._get_client().read_file(
-                repo_id=self._repo_id,
-                revision=self._revision,
-                path=path,
-                start_line=start_line,
-                end_line=end_line,
-            )
-            line_suffix = f":{start_line}" if action.get("start_line") else ""
-            line_suffix += f"-{end_line}" if end_line else ""
-            header = f"{path}{line_suffix}\n\n"
-            truncation = "\n[truncated by Evidence server]" if result.truncated else ""
-            return {
-                "output": header + result.content + truncation,
-                "returncode": 0,
-            }
-        except (httpx.HTTPError, FormsyEvidenceError) as e:
-            self.logger.warning("context_read failed: %s", e)
-            return {
-                "output": f"context_read failed: {e}",
-                "returncode": 1,
-            }
+        candidates = _read_path_candidates(raw_path)
+        line_suffix = f":{start_line}" if action.get("start_line") else ""
+        line_suffix += f"-{end_line}" if end_line else ""
+        last_error: Exception | None = None
+        for path in candidates:
+            try:
+                result = self._get_client().read_file(
+                    repo_id=self._repo_id,
+                    revision=self._revision,
+                    path=path,
+                    start_line=start_line,
+                    end_line=end_line,
+                )
+                header = f"{path}{line_suffix}\n\n"
+                truncation = "\n[truncated by Evidence server]" if result.truncated else ""
+                return {"output": header + result.content + truncation, "returncode": 0}
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code != 404:
+                    break  # non-404 HTTP error: stop retrying, degrade below
+                # 404: try the next (shorter) candidate
+            except (httpx.HTTPError, FormsyEvidenceError) as e:
+                last_error = e
+                break
+        self.logger.warning(
+            "context_read failed for %r (tried %s): %s", raw_path, candidates, last_error
+        )
+        return {
+            "output": (
+                f"context_read: '{raw_path}' not found in Evidence index "
+                f"(tried {candidates}). The index uses repo-relative paths — "
+                "use context_search to get the correct path."
+            ),
+            "returncode": 1,
+        }
+
+
+def _read_path_candidates(raw: str) -> list[str]:
+    """Normalized path candidates for a context_read path.
+
+    Strips the leading slash, then yields the path with 0, 1, 2 leading
+    components stripped (most-specific first). ``/app/lib/x.py`` →
+    ``["app/lib/x.py", "lib/x.py", "x.py"]``. The Evidence index is tried in
+    that order on 404.
+    """
+    p = (raw or "").strip().lstrip("/")
+    if not p:
+        return []
+    parts = p.split("/")
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for i in range(min(len(parts), 3)):
+        cand = "/".join(parts[i:])
+        if cand and cand not in seen:
+            seen.add(cand)
+            candidates.append(cand)
+    return candidates
