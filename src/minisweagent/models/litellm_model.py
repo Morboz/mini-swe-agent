@@ -101,19 +101,25 @@ class LitellmModel:
         if self.config.agentops:
             _init_agentops()
 
-    def start_run_trace(self) -> None:
+    def start_run_trace(self, *, tags: dict[str, Any] | None = None) -> None:
         """Begin an AgentOps trace spanning one agent run. No-op unless `agentops` is enabled;
         each subsequent `query()` is recorded as a span under this trace until `end_run_trace()`.
+
+        ``tags`` are merged onto ``{"model": ...}``. If an ``instance_id`` tag is present it is
+        also folded into the trace name so individual eval cases are easy to spot in the dashboard.
         """
         if not self.config.agentops:
             return
         try:
             import agentops
 
-            self._agentops_trace = agentops.start_trace(
-                trace_name="mini-swe-agent run",
-                tags={"model": self.config.model_name},
-            )
+            run_tags = {"model": self.config.model_name}
+            if tags:
+                run_tags.update(tags)
+            trace_name = "mini-swe-agent run"
+            if run_tags.get("instance_id"):
+                trace_name = f"mini-swe-agent run [{run_tags['instance_id']}]"
+            self._agentops_trace = agentops.start_trace(trace_name=trace_name, tags=run_tags)
         except Exception as e:
             logger.debug(f"AgentOps start_trace failed: {e}")
             self._agentops_trace = None

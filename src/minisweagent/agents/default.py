@@ -84,9 +84,16 @@ class DefaultAgent:
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
         )
         # Optional observability (e.g. AgentOps): group every LLM call of this run under one trace.
+        # Tag with instance_id when present (e.g. swebench passes it via run()) so each eval case's
+        # trace is identifiable in the dashboard.
         start_run_trace = getattr(self.model, "start_run_trace", None)
         if start_run_trace is not None:
-            start_run_trace()
+            run_tags = (
+                {"instance_id": str(instance_id)}
+                if (instance_id := self.extra_template_vars.get("instance_id"))
+                else None
+            )
+            start_run_trace(tags=run_tags)
         completed = False
         try:
             while True:
