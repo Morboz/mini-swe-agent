@@ -23,6 +23,39 @@ from minisweagent.models.utils.retry import retry
 logger = logging.getLogger("litellm_model")
 
 
+_agentops_initialized = False
+
+
+def _init_agentops() -> None:
+    """Initialize AgentOps once per process so LLM calls are traced.
+
+    We rely on the AgentOps SDK's auto-instrumentation (``instrument_llm_calls=True``,
+    the default) rather than litellm's ``success_callback=["agentops"]``: the SDK wraps the
+    provider client (openai/anthropic/gemini/...) and records each completion as a ``gen_ai``
+    span nested under the current trace, whereas litellm's callback uses its own OTel provider
+    and emits a separate root trace per call. Idempotent and fail-safe: if ``agentops`` isn't
+    installed or can't initialize, tracing is silently disabled and LLM calls proceed normally.
+    Traces are scoped per agent run via :meth:`LitellmModel.start_run_trace`, so the SDK's
+    auto-session is disabled here.
+    """
+    global _agentops_initialized
+    if _agentops_initialized:
+        return
+    _agentops_initialized = True
+    try:
+        import agentops
+    except ImportError:
+        logger.warning(
+            "AgentOps tracing enabled (MSWEA_AGENTOPS set) but the 'agentops' package is not "
+            "installed. Install it (`uv pip install agentops`) or unset MSWEA_AGENTOPS."
+        )
+        return
+    try:
+        agentops.init(auto_start_session=False)
+    except Exception as e:
+        logger.warning(f"Failed to initialize AgentOps tracing: {e}")
+
+
 class LitellmModelConfig(BaseModel):
     model_name: str
     """Model name. Highly recommended to include the provider in the model name, e.g., `anthropic/claude-sonnet-4-5-20250929`."""
@@ -34,6 +67,9 @@ class LitellmModelConfig(BaseModel):
     """Set explicit cache control markers, for example for Anthropic models"""
     cost_tracking: Literal["default", "ignore_errors"] = os.getenv("MSWEA_COST_TRACKING", "default")
     """Cost tracking mode for this model. Can be "default" or "ignore_errors" (ignore errors/missing cost info)"""
+    agentops: bool = bool(os.getenv("MSWEA_AGENTOPS", ""))
+    """Enable AgentOps tracing of LLM calls (one trace per agent run). Requires the `agentops`
+    package and `AGENTOPS_API_KEY`. See https://docs.agentops.ai/v2/integrations/litellm."""
     format_error_template: str = "{{ error }}"
     """Template used when the LM's output is not in the expected format."""
     observation_template: str = (
@@ -61,6 +97,40 @@ class LitellmModel:
         self.config = config_class(**kwargs)
         if self.config.litellm_model_registry and Path(self.config.litellm_model_registry).is_file():
             litellm.utils.register_model(json.loads(Path(self.config.litellm_model_registry).read_text()))
+        self._agentops_trace = None
+        if self.config.agentops:
+            _init_agentops()
+
+    def start_run_trace(self) -> None:
+        """Begin an AgentOps trace spanning one agent run. No-op unless `agentops` is enabled;
+        each subsequent `query()` is recorded as a span under this trace until `end_run_trace()`.
+        """
+        if not self.config.agentops:
+            return
+        try:
+            import agentops
+
+            self._agentops_trace = agentops.start_trace(
+                trace_name="mini-swe-agent run",
+                tags={"model": self.config.model_name},
+            )
+        except Exception as e:
+            logger.debug(f"AgentOps start_trace failed: {e}")
+            self._agentops_trace = None
+
+    def end_run_trace(self, *, end_state: str = "Success") -> None:
+        """End the current AgentOps run trace. Safe to call when no trace is active."""
+        trace = getattr(self, "_agentops_trace", None)
+        if trace is None:
+            return
+        try:
+            import agentops
+
+            agentops.end_trace(trace, end_state=end_state)
+        except Exception as e:
+            logger.debug(f"AgentOps end_trace failed: {e}")
+        finally:
+            self._agentops_trace = None
 
     def _query(self, messages: list[dict[str, str]], **kwargs):
         try:

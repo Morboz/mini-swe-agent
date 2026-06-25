@@ -83,19 +83,30 @@ class DefaultAgent:
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
         )
-        while True:
-            try:
-                self.step()
-            except InterruptAgentFlow as e:
-                self.add_messages(*e.messages)
-            except Exception as e:
-                self.handle_uncaught_exception(e)
-                raise
-            finally:
-                self.save(self.config.output_path)
-            if self.messages[-1].get("role") == "exit":
-                break
-        return self.messages[-1].get("extra", {})
+        # Optional observability (e.g. AgentOps): group every LLM call of this run under one trace.
+        start_run_trace = getattr(self.model, "start_run_trace", None)
+        if start_run_trace is not None:
+            start_run_trace()
+        completed = False
+        try:
+            while True:
+                try:
+                    self.step()
+                except InterruptAgentFlow as e:
+                    self.add_messages(*e.messages)
+                except Exception as e:
+                    self.handle_uncaught_exception(e)
+                    raise
+                finally:
+                    self.save(self.config.output_path)
+                if self.messages[-1].get("role") == "exit":
+                    break
+            completed = True
+            return self.messages[-1].get("extra", {})
+        finally:
+            end_run_trace = getattr(self.model, "end_run_trace", None)
+            if end_run_trace is not None:
+                end_run_trace(end_state="Success" if completed else "Error")
 
     def step(self) -> list[dict]:
         """Query the LM, execute actions."""
