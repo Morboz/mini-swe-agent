@@ -83,7 +83,7 @@ class DefaultAgent:
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
         )
-        # Optional observability (e.g. AgentOps): group every LLM call of this run under one trace.
+        # Optional observability (e.g. Langfuse): group every LLM call of this run under one trace.
         # Tag with instance_id when present (e.g. swebench passes it via run()) so each eval case's
         # trace is identifiable in the dashboard.
         start_run_trace = getattr(self.model, "start_run_trace", None)

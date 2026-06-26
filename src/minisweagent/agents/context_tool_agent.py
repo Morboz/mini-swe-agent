@@ -137,9 +137,9 @@ class ContextToolAgent(DefaultAgent):
     def execute_actions(self, message: dict) -> list[dict]:
         """Execute actions in message, dispatching by tool type.
 
-        Each tool invocation is wrapped in an AgentOps ``tool`` span so the dashboard shows
-        ``trace → agent → tool`` nesting with the tool's inputs, outputs, and failure status.
-        Spans are no-ops when agentops is disabled.
+        Each tool invocation is wrapped in a tool span so the dashboard shows
+        ``trace → agent → tool`` nesting with the tool's inputs, outputs, and
+        failure status.  Spans are no-ops when observability is disabled.
         """
         actions = message.get("extra", {}).get("actions", [])
         outputs = []
@@ -159,7 +159,7 @@ class ContextToolAgent(DefaultAgent):
         )
 
     def _execute_bash_span(self, action: dict) -> dict:
-        """Run a bash action under an AgentOps tool span, recording command, output, and failures."""
+        """Run a bash action under a tool span, recording command, output, and failures."""
         command = action.get("command", "")
         handle = self.model.start_tool_span(name="bash", inputs={"command": command})
         try:
@@ -177,7 +177,7 @@ class ContextToolAgent(DefaultAgent):
         return output
 
     def _end_tool_span(self, handle, *, end_state: str, error: str | None, output) -> None:
-        """Close an AgentOps tool span, setting output/failure attributes. Safe when handle is None."""
+        """Close a tool span, setting output/failure attributes. Safe when handle is None."""
         if handle is None:
             return
         try:

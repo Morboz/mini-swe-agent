@@ -90,7 +90,7 @@ contree = [
 ]
 
 observability = [
-    "agentops>=0.4",
+    "langfuse>=4",
 ]
 
 [project.urls]
