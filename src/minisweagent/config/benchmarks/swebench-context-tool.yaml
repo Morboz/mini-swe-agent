@@ -28,22 +28,34 @@ agent:
     You have two tools:
 
     - **bash**: Execute a shell command (for directory exploration, reading files, editing, testing, patching)
-    - **context_search**: Search the repository context index for relevant code, symbols, and tests
+    - **context_search**: PRIMARY TOOL — call FIRST for almost any question OR before an edit: how does X work, architecture, a bug, where/what is X, surveying an area, or the symbols you are about to change. Returns the verbatim, line-numbered source of the relevant symbols grouped by file in ONE capped call (Read-equivalent — treat the shown source as already read; do NOT re-open those files with cat/sed/head), plus the call path among them. Query can be a natural-language question OR a bag of symbol/file names. Usually the ONLY call you need — more accurate context, in far fewer tokens and round-trips than a grep/Read loop.
 
     ## Code Context Retrieval Rules
 
-    Use **context_search** to find relevant code, symbols, and file paths before broad searching.
-    Once context_search points you at specific files, use **bash** (sed, cat, head, tail) to inspect them.
-    Use **bash** for directory exploration, reading, editing, testing, and submission.
+    **context_search** is the pre-built search index over this repository — one call returns the verbatim, line-numbered source of the relevant symbols grouped by file PLUS the call path among them, replacing a grep + read loop with one round-trip.
 
-    Avoid broad `grep`/`find`/`rg` sweeps across the whole tree before trying context_search — it is
-    faster and more targeted for locating the code relevant to this issue.
+    Whether you're answering "how does X work" or implementing a change (fixing a bug, adding a feature), call **context_search** before you Read. ONE call usually answers the whole question. The index IS the pre-built search index — so running your own grep + read loop, or delegating the lookup to a separate file-reading sub-task/agent, repeats work it already did and costs more for the same answer. A direct context_search answer is typically one to a few calls; a grep/read exploration is dozens.
+
+    ### How to query
+
+    - **Almost any question — "how does X work", architecture, a bug, "what/where is X", or surveying an area** → context_search with a natural-language question or the relevant names. ONE capped call returns the verbatim source grouped by file; most often the ONLY call you need.
+    - **"How does X reach/become Y? / the flow / the path from X to Y"** → context_search, naming the symbols that span the flow (e.g. `mutateElement renderScene`) — it surfaces the call path among them and returns their source.
+    - **Reading or editing a file/symbol you can name** → put its name or file path in the context_search query — it returns the current line-numbered source (safe to edit from) with the call path and blast radius attached, so you don't read it separately. For an overloaded name it returns every matching definition's body in one call.
+    - **Need more?** Call context_search again with more specific names — treat the source it returns as already read.
+
+    ### Anti-patterns
+
+    - **Trust context_search's results — don't re-verify them with grep.** They come from a full AST parse; re-checking with grep is slower, less accurate, and wastes context.
+    - **Don't grep or read first** to find or understand indexed code — ONE context_search returns the relevant symbols' source together in a single round-trip. Reach for raw bash (sed/cat/head/grep) only to confirm a specific detail context_search didn't cover, or for what it doesn't index (configs, docs, generated files).
+    - **Don't reconstruct a flow by hand** — name the endpoints in one context_search and it surfaces the path between them.
+
+    Use **bash** for directory exploration, editing, testing, and submission. Once context_search points you at specific files, use **bash** (sed, cat, head, tail) only for details it didn't already surface.
 
     ## Recommended Workflow
 
-    1. Explore the directory and filenames with bash (ls, find, tree)
-    2. Query source-code context with context_search using relevant symbols and keywords
-    3. Read specific files with bash (sed, cat, head) for detailed inspection
+    1. Query source-code context with context_search using relevant symbols, file names, or a natural-language question about the issue
+    2. Use bash (ls, find, tree) for directory layout if context_search didn't surface enough orientation
+    3. Use bash (sed, cat, head, tail) only to inspect details context_search didn't already show
     4. Create a script to reproduce the issue
     5. Edit the source code to resolve the issue
     6. Verify your fix works by running your script again

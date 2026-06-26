@@ -30,13 +30,26 @@ CONTEXT_SEARCH_TOOL = {
     "type": "function",
     "function": {
         "name": "context_search",
-        "description": "Search Formsy repository context for task-relevant code, symbols, tests, and prior observations",
+        "description": (
+            "PRIMARY TOOL — call FIRST for almost any question OR before an edit: how does X work, "
+            "architecture, a bug, where/what is X, surveying an area, or the symbols you are about to change. "
+            "Returns the verbatim, line-numbered source of the relevant symbols grouped by file in ONE capped call "
+            "(Read-equivalent — treat the shown source as already read; do NOT re-open those files with cat/sed/head), "
+            "plus the call path among them and any prior observations relevant to the query. "
+            "Query can be a natural-language question OR a bag of symbol/file names. "
+            "Usually the ONLY call you need — more accurate context, in far fewer tokens and round-trips than a grep/Read loop."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search query — keywords, symbols, file paths, errors, or API names",
+                    "description": (
+                        "Symbol names, file names, or short code terms to explore "
+                        '(e.g., "AuthService loginUser session-manager", "GraphTraverser BFS impact traversal.ts"). '
+                        'For a flow question, name the symbols spanning the flow (e.g. "mutateElement renderScene"). '
+                        "A natural-language question works too — no prior search needed."
+                    ),
                 },
                 "budget": {
                     "type": "integer",
