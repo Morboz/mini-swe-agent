@@ -1,3 +1,4 @@
+import contextlib
 import json
 import logging
 import os
@@ -137,6 +138,122 @@ class LitellmModel:
             logger.debug(f"AgentOps end_trace failed: {e}")
         finally:
             self._agentops_trace = None
+
+    def start_run_span(self, *, name: str = "agent.run", attributes: dict[str, Any] | None = None) -> Any:
+        """Open an ``agentops.span.kind="agent"`` span around the run loop so the dashboard shows
+        ``trace → agent.span → {gen_ai.span, tool.span}`` hierarchy. Returns an opaque handle to
+        pass to :meth:`end_run_span`, or ``None`` if agentops is disabled/unavailable. The span is
+        attached as the current context so child spans (LLM calls, tool calls) nest under it.
+        """
+        if not self.config.agentops:
+            return None
+        try:
+            from agentops.semconv import SpanKind
+            from agentops.sdk.decorators.factory import _create_as_current_span
+
+            cm = _create_as_current_span(name, SpanKind.AGENT, attributes=attributes)
+            span = cm.__enter__()
+            return (cm, span)
+        except Exception as e:
+            logger.debug(f"AgentOps start_run_span failed: {e}")
+            return None
+
+    def end_run_span(self, handle: Any, *, end_state: str = "Success", error: str | None = None) -> None:
+        """Close a span opened by :meth:`start_run_span`. Records end_state and error on the span."""
+        if handle is None:
+            return
+        cm, span = handle
+        try:
+            from opentelemetry.trace import Status, StatusCode
+
+            from agentops.semconv import SpanAttributes
+
+            span.set_attribute(SpanAttributes.AGENTOPS_SESSION_END_STATE, end_state)
+            if error is not None:
+                span.set_attribute("error.message", error)
+                span.set_status(Status(StatusCode.ERROR, error))
+            elif end_state not in ("Success", "Indeterminate"):
+                span.set_status(Status(StatusCode.ERROR))
+            cm.__exit__(None, None, None)
+        except Exception as e:
+            logger.debug(f"AgentOps end_run_span failed: {e}")
+            try:
+                cm.__exit__(None, None, None)
+            except Exception:
+                pass
+
+    @contextlib.contextmanager
+    def tool_span(self, name: str, *, inputs: dict[str, Any] | None = None):
+        """Yield an AgentOps ``tool`` span around a tool execution.
+
+        Records ``inputs`` as ``agentops.tool.input`` on entry; the caller should call
+        ``span.set_output(...)`` or set ``agentops.tool.output`` directly on the yielded span.
+        On exception, marks the span as ERROR with the error message. No-op (yields ``None``)
+        when agentops is disabled or uninitialized so callers don't pay any cost.
+        """
+        handle = self.start_tool_span(name=name, inputs=inputs)
+        try:
+            yield handle[1] if handle is not None else None
+        except Exception as e:
+            if handle is not None:
+                self._end_tool_span(handle, end_state="Error", error=str(e), output=None)
+            raise
+        else:
+            if handle is not None:
+                # Caller is expected to have set output on the span; mark success.
+                self._end_tool_span(handle, end_state="Success", error=None, output=None)
+
+    def start_tool_span(
+        self, *, name: str, inputs: dict[str, Any] | None = None
+    ) -> Any:
+        """Open an ``agentops.span.kind="tool"`` span for a tool call. Returns ``(cm, span)`` or ``None``."""
+        if not self.config.agentops:
+            return None
+        try:
+            from agentops.semconv import SpanKind, SpanAttributes
+            from agentops.sdk.decorators.factory import _create_as_current_span, _record_entity_input
+
+            cm = _create_as_current_span(name, SpanKind.TOOL)
+            span = cm.__enter__()
+            if inputs is not None:
+                _record_entity_input(span, (), inputs, entity_kind="tool")
+            return (cm, span)
+        except Exception as e:
+            logger.debug(f"AgentOps start_tool_span failed: {e}")
+            return None
+
+    def _end_tool_span(
+        self,
+        handle: Any,
+        *,
+        end_state: str = "Success",
+        error: str | None = None,
+        output: Any = None,
+    ) -> None:
+        if handle is None:
+            return
+        cm, span = handle
+        try:
+            from opentelemetry.trace import Status, StatusCode
+
+            from agentops.semconv import SpanAttributes
+            from agentops.sdk.decorators.factory import _record_entity_output
+
+            if output is not None:
+                _record_entity_output(span, output, entity_kind="tool")
+            span.set_attribute(SpanAttributes.AGENTOPS_SESSION_END_STATE, end_state)
+            if error is not None:
+                span.set_attribute("error.message", error)
+                span.set_status(Status(StatusCode.ERROR, error))
+            elif end_state != "Success":
+                span.set_status(Status(StatusCode.ERROR))
+            cm.__exit__(None, None, None)
+        except Exception as e:
+            logger.debug(f"AgentOps end_tool_span failed: {e}")
+            try:
+                cm.__exit__(None, None, None)
+            except Exception:
+                pass
 
     def _query(self, messages: list[dict[str, str]], **kwargs):
         try:

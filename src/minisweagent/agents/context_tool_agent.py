@@ -135,13 +135,18 @@ class ContextToolAgent(DefaultAgent):
     # -- Tool dispatch -------------------------------------------------------
 
     def execute_actions(self, message: dict) -> list[dict]:
-        """Execute actions in message, dispatching by tool type."""
+        """Execute actions in message, dispatching by tool type.
+
+        Each tool invocation is wrapped in an AgentOps ``tool`` span so the dashboard shows
+        ``trace → agent → tool`` nesting with the tool's inputs, outputs, and failure status.
+        Spans are no-ops when agentops is disabled.
+        """
         actions = message.get("extra", {}).get("actions", [])
         outputs = []
         for action in actions:
             tool = action.get("tool", "bash")
             if tool == "bash":
-                outputs.append(self.env.execute(action))
+                outputs.append(self._execute_bash_span(action))
             elif tool == "context_search":
                 outputs.append(self._execute_context_search(action))
             else:
@@ -153,17 +158,52 @@ class ContextToolAgent(DefaultAgent):
             *self.model.format_observation_messages(message, outputs, self.get_template_vars())
         )
 
+    def _execute_bash_span(self, action: dict) -> dict:
+        """Run a bash action under an AgentOps tool span, recording command, output, and failures."""
+        command = action.get("command", "")
+        handle = self.model.start_tool_span(name="bash", inputs={"command": command})
+        try:
+            output = self.env.execute(action)
+        except Exception as e:
+            self._end_tool_span(handle, end_state="Error", error=str(e), output=None)
+            raise
+        end_state = "Success" if output.get("returncode", 0) == 0 else "Error"
+        self._end_tool_span(
+            handle,
+            end_state=end_state,
+            error=output.get("exception_info") if end_state == "Error" else None,
+            output=output,
+        )
+        return output
+
+    def _end_tool_span(self, handle, *, end_state: str, error: str | None, output) -> None:
+        """Close an AgentOps tool span, setting output/failure attributes. Safe when handle is None."""
+        if handle is None:
+            return
+        try:
+            self.model._end_tool_span(handle, end_state=end_state, error=error, output=output)
+        except Exception:
+            pass
+
     # -- context_search ------------------------------------------------------
 
     def _execute_context_search(self, action: dict) -> dict[str, Any]:
         """Explore the Evidence for a natural-language query."""
+        query = action.get("query", "")
+        budget = action.get("budget")
+        inputs = {"query": query}
+        if budget is not None:
+            inputs["budget"] = budget
         if not self._ingest_ok:
-            return {
+            output = {
                 "output": "context_search unavailable (evidence not ingested); use bash instead",
                 "returncode": 1,
             }
-        query = action.get("query", "")
+            handle = self.model.start_tool_span(name="context_search", inputs=inputs)
+            self._end_tool_span(handle, end_state="Error", error=output["output"], output=output)
+            return output
         max_output_chars = action.get("budget", self.memory_config.get("max_output_chars", 4000))
+        handle = self.model.start_tool_span(name="context_search", inputs=inputs)
         try:
             result = self._get_client().explore(
                 repo_id=self._repo_id,
@@ -177,13 +217,17 @@ class ContextToolAgent(DefaultAgent):
             self.logger.info(
                 "context_search %r -> %d chars", query, len(result.content)
             )
-            return {
+            output = {
                 "output": result.content,
                 "returncode": 0,
             }
+            self._end_tool_span(handle, end_state="Success", error=None, output=output)
+            return output
         except (httpx.HTTPError, FormsyEvidenceError) as e:
             self.logger.warning("context_search failed: %s", e)
-            return {
+            output = {
                 "output": f"context_search failed: {e}",
                 "returncode": 1,
             }
+            self._end_tool_span(handle, end_state="Error", error=str(e), output=output)
+            return output
