@@ -83,7 +83,7 @@ class DefaultAgent:
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
         )
-        # Optional observability (e.g. AgentOps): group every LLM call of this run under one trace.
+        # Optional observability (e.g. Langfuse): group every LLM call of this run under one trace.
         # Tag with instance_id when present (e.g. swebench passes it via run()) so each eval case's
         # trace is identifiable in the dashboard.
         start_run_trace = getattr(self.model, "start_run_trace", None)
@@ -94,7 +94,11 @@ class DefaultAgent:
                 else None
             )
             start_run_trace(tags=run_tags)
+        # Open an agent-level span so the dashboard shows trace → agent → {gen_ai, tool} nesting.
+        start_run_span = getattr(self.model, "start_run_span", None)
+        run_span_handle = start_run_span(name="agent.run") if start_run_span is not None else None
         completed = False
+        run_error: Exception | None = None
         try:
             while True:
                 try:
@@ -110,7 +114,18 @@ class DefaultAgent:
                     break
             completed = True
             return self.messages[-1].get("extra", {})
+        except Exception as e:
+            run_error = e
+            raise
         finally:
+            end_run_span = getattr(self.model, "end_run_span", None)
+            if end_run_span is not None:
+                end_state = "Success" if completed else "Error"
+                end_run_span(
+                    run_span_handle,
+                    end_state=end_state,
+                    error=str(run_error) if run_error is not None else None,
+                )
             end_run_trace = getattr(self.model, "end_run_trace", None)
             if end_run_trace is not None:
                 end_run_trace(end_state="Success" if completed else "Error")

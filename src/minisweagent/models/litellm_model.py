@@ -1,3 +1,4 @@
+import contextlib
 import json
 import logging
 import os
@@ -10,6 +11,12 @@ import litellm
 from pydantic import BaseModel
 
 from minisweagent.models import GLOBAL_MODEL_STATS, normalize_usage
+from minisweagent.models.observability import (
+    LangfuseBackend,
+    NoopBackend,
+    ObservabilityBackend,
+    init_langfuse,
+)
 from minisweagent.models.utils.actions_toolcall import (
     BASH_TOOL,
     format_toolcall_observation_messages,
@@ -23,39 +30,6 @@ from minisweagent.models.utils.retry import retry
 logger = logging.getLogger("litellm_model")
 
 
-_agentops_initialized = False
-
-
-def _init_agentops() -> None:
-    """Initialize AgentOps once per process so LLM calls are traced.
-
-    We rely on the AgentOps SDK's auto-instrumentation (``instrument_llm_calls=True``,
-    the default) rather than litellm's ``success_callback=["agentops"]``: the SDK wraps the
-    provider client (openai/anthropic/gemini/...) and records each completion as a ``gen_ai``
-    span nested under the current trace, whereas litellm's callback uses its own OTel provider
-    and emits a separate root trace per call. Idempotent and fail-safe: if ``agentops`` isn't
-    installed or can't initialize, tracing is silently disabled and LLM calls proceed normally.
-    Traces are scoped per agent run via :meth:`LitellmModel.start_run_trace`, so the SDK's
-    auto-session is disabled here.
-    """
-    global _agentops_initialized
-    if _agentops_initialized:
-        return
-    _agentops_initialized = True
-    try:
-        import agentops
-    except ImportError:
-        logger.warning(
-            "AgentOps tracing enabled (MSWEA_AGENTOPS set) but the 'agentops' package is not "
-            "installed. Install it (`uv pip install agentops`) or unset MSWEA_AGENTOPS."
-        )
-        return
-    try:
-        agentops.init(auto_start_session=False)
-    except Exception as e:
-        logger.warning(f"Failed to initialize AgentOps tracing: {e}")
-
-
 class LitellmModelConfig(BaseModel):
     model_name: str
     """Model name. Highly recommended to include the provider in the model name, e.g., `anthropic/claude-sonnet-4-5-20250929`."""
@@ -67,9 +41,10 @@ class LitellmModelConfig(BaseModel):
     """Set explicit cache control markers, for example for Anthropic models"""
     cost_tracking: Literal["default", "ignore_errors"] = os.getenv("MSWEA_COST_TRACKING", "default")
     """Cost tracking mode for this model. Can be "default" or "ignore_errors" (ignore errors/missing cost info)"""
-    agentops: bool = bool(os.getenv("MSWEA_AGENTOPS", ""))
-    """Enable AgentOps tracing of LLM calls (one trace per agent run). Requires the `agentops`
-    package and `AGENTOPS_API_KEY`. See https://docs.agentops.ai/v2/integrations/litellm."""
+    langfuse: bool = bool(os.getenv("MSWEA_LANGFUSE", ""))
+    """Enable Langfuse tracing of LLM calls (one trace per agent run). Requires the
+    `langfuse` package and `LANGFUSE_SECRET_KEY`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_BASE_URL`
+    env vars. See https://langfuse.com/docs/observability/sdk/overview."""
     format_error_template: str = "{{ error }}"
     """Template used when the LM's output is not in the expected format."""
     observation_template: str = (
@@ -97,46 +72,71 @@ class LitellmModel:
         self.config = config_class(**kwargs)
         if self.config.litellm_model_registry and Path(self.config.litellm_model_registry).is_file():
             litellm.utils.register_model(json.loads(Path(self.config.litellm_model_registry).read_text()))
-        self._agentops_trace = None
-        if self.config.agentops:
-            _init_agentops()
+        self._observability: ObservabilityBackend = NoopBackend()
+        if self.config.langfuse:
+            init_langfuse()
+            self._observability = LangfuseBackend()
+
+    # -- Observability ---------------------------------------------------------
+    # All trace/span methods delegate to the active backend.  They are no-ops
+    # when observability is disabled, so callers (DefaultAgent.run,
+    # ContextToolAgent.execute_actions) don't need to branch.
 
     def start_run_trace(self, *, tags: dict[str, Any] | None = None) -> None:
-        """Begin an AgentOps trace spanning one agent run. No-op unless `agentops` is enabled;
-        each subsequent `query()` is recorded as a span under this trace until `end_run_trace()`.
-
-        ``tags`` are merged onto ``{"model": ...}``. If an ``instance_id`` tag is present it is
-        also folded into the trace name so individual eval cases are easy to spot in the dashboard.
+        """Begin a trace spanning one agent run. ``tags`` are merged onto
+        ``{"model": ...}``. If an ``instance_id`` tag is present it is also
+        folded into the trace name so individual eval cases are easy to spot.
         """
-        if not self.config.agentops:
-            return
-        try:
-            import agentops
-
-            run_tags = {"model": self.config.model_name}
-            if tags:
-                run_tags.update(tags)
-            trace_name = "mini-swe-agent run"
-            if run_tags.get("instance_id"):
-                trace_name = f"mini-swe-agent run [{run_tags['instance_id']}]"
-            self._agentops_trace = agentops.start_trace(trace_name=trace_name, tags=run_tags)
-        except Exception as e:
-            logger.debug(f"AgentOps start_trace failed: {e}")
-            self._agentops_trace = None
+        run_tags = {"model": self.config.model_name}
+        if tags:
+            run_tags.update(tags)
+        trace_name = "mini-swe-agent run"
+        if run_tags.get("instance_id"):
+            trace_name = f"mini-swe-agent run [{run_tags['instance_id']}]"
+        run_tags["trace_name"] = trace_name
+        self._observability.start_run_trace(tags=run_tags)
 
     def end_run_trace(self, *, end_state: str = "Success") -> None:
-        """End the current AgentOps run trace. Safe to call when no trace is active."""
-        trace = getattr(self, "_agentops_trace", None)
-        if trace is None:
-            return
-        try:
-            import agentops
+        """End the current run trace. Safe to call when no trace is active."""
+        self._observability.end_run_trace(end_state=end_state)
 
-            agentops.end_trace(trace, end_state=end_state)
-        except Exception as e:
-            logger.debug(f"AgentOps end_trace failed: {e}")
-        finally:
-            self._agentops_trace = None
+    def start_run_span(self, *, name: str = "agent.run", attributes: dict[str, Any] | None = None) -> Any:
+        """Open a span around the run loop so the dashboard shows
+        ``trace → agent.span → {generation.span, tool.span}`` hierarchy.
+        Returns an opaque handle for :meth:`end_run_span`, or ``None`` if
+        observability is disabled.
+        """
+        return self._observability.start_run_span(name=name, attributes=attributes)
+
+    def end_run_span(self, handle: Any, *, end_state: str = "Success", error: str | None = None) -> None:
+        """Close a span opened by :meth:`start_run_span`."""
+        self._observability.end_run_span(handle, end_state=end_state, error=error)
+
+    @contextlib.contextmanager
+    def tool_span(self, name: str, *, inputs: dict[str, Any] | None = None):
+        """Yield a tool span around a tool execution.
+
+        No-op (yields ``None``) when observability is disabled, so callers
+        don't pay any cost.
+        """
+        with self._observability.tool_span(name, inputs=inputs) as span:
+            yield span
+
+    def start_tool_span(
+        self, *, name: str, inputs: dict[str, Any] | None = None
+    ) -> Any:
+        """Open a tool span. Returns ``(cm, span)`` or ``None``."""
+        return self._observability.start_tool_span(name=name, inputs=inputs)
+
+    def _end_tool_span(
+        self,
+        handle: Any,
+        *,
+        end_state: str = "Success",
+        error: str | None = None,
+        output: Any = None,
+    ) -> None:
+        self._observability._end_tool_span(handle, end_state=end_state, error=error, output=output)
 
     def _query(self, messages: list[dict[str, str]], **kwargs):
         try:
