@@ -196,9 +196,12 @@ class LangfuseBackend(ObservabilityBackend):
 
     @staticmethod
     def _client():
-        from langfuse import get_client
+        try:
+            from langfuse import get_client  # pylint: disable=import-error
 
-        return get_client()
+            return get_client()
+        except ImportError:
+            return None
 
     # -- Trace lifecycle --------------------------------------------------------
 
@@ -210,7 +213,9 @@ class LangfuseBackend(ObservabilityBackend):
         """
         try:
             lf = self._client()
-            from langfuse import propagate_attributes
+            if lf is None:
+                return
+            from langfuse import propagate_attributes  # pylint: disable=import-error
 
             attrs = dict(tags) if tags else {}
             trace_name = attrs.pop("trace_name", "mini-swe-agent run")
