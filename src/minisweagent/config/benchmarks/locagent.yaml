@@ -41,7 +41,7 @@ agent:
     When you have identified all locations, submit your findings using these EXACT commands:
 
     Step 1: Write the output to loc.txt
-    Write your localization findings to a file called `/testbed/loc.txt` using this format:
+    Write your localization findings to a file called `/app/loc.txt` using this format:
 
     ```
     file1.py
@@ -69,7 +69,7 @@ agent:
 
     Step 2: Submit (EXACT command required)
     ```bash
-    echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat /testbed/loc.txt
+    echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat /app/loc.txt
     ```
 
     If the command fails (nonzero exit status), it will not submit.
@@ -79,14 +79,14 @@ agent:
     - Do NOT modify any source code files — you are only identifying locations, not fixing them.
     - Do NOT run any tests or reproduction scripts that could modify the repository state.
     - You may read files, search with grep/find, and explore the directory structure.
-    - The /testbed directory is your working directory.
+    - The /app directory is your working directory.
     </CRITICAL>
     </instructions>
   step_limit: 250
   cost_limit: 3.0
 
 environment:
-  cwd: "/testbed"
+  cwd: "/app"
   timeout: 60
   interpreter: ["bash", "-c"]
   env:
