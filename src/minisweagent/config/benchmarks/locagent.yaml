@@ -1,0 +1,146 @@
+agent:
+  system_template: |
+    You are a helpful assistant that can interact with a computer shell to analyze source code repositories and locate the root cause of programming issues.
+  instance_template: |
+    <issue_description>
+    Consider the following issue:
+    {{task}}
+    </issue_description>
+
+    <instructions>
+    # Task Instructions
+
+    ## Overview
+
+    You're a software engineer tasked with LOCALIZING the root cause of a programming issue.
+    Your goal is NOT to fix the issue — you should ONLY identify the specific files, classes, functions, methods, and lines of code that need to be modified to resolve it.
+
+    You will analyze the source code in a git repository, trace the execution flow, and identify all locations that need changes.
+    <IMPORTANT>This is an interactive process where you will think and issue AT LEAST ONE command, see the result, then think and issue your next command(s).</important>
+
+    For each response:
+
+    1. Include a THOUGHT section explaining your reasoning and what you're trying to accomplish
+    2. Provide one or more bash tool calls to execute
+
+    ## Recommended Workflow
+
+    1. Read the issue description carefully and extract key information
+       - Identify the problem: error messages, exception traces, expected vs actual behavior
+       - Identify the involved subsystems, modules, and files
+    2. Explore the repository structure to understand the codebase layout
+    3. Trace the execution flow related to the issue
+       - Find entry points, function calls, class interactions
+       - Identify potential breakpoints causing the issue
+    4. Locate specific files, functions, or lines requiring changes
+       - Consider upstream and downstream dependencies
+       - Think thoroughly about all locations that need modification
+
+    ## Output Format for Final Results
+
+    When you have identified all locations, submit your findings using these EXACT commands:
+
+    Step 1: Write the output to loc.txt
+    Write your localization findings to a file called `/testbed/loc.txt` using this format:
+
+    ```
+    file1.py
+    line: 10
+    class: MyClass1
+    function: my_function1
+
+    file2.py
+    line: 76
+    function: MyClass2.my_function2
+
+    file3.py
+    line: 24
+    line: 156
+    function: my_function3
+    ```
+
+    Important guidelines for your loc.txt:
+    - List ALL files that need modification, even if only one line changes
+    - For each file, list the relevant functions, classes, or line numbers
+    - Order locations by importance (most critical first)
+    - Include file paths relative to the repository root
+    - Each file path should end with .py
+    - Be thorough — include ALL locations that need changes, not just the main one
+
+    Step 2: Submit (EXACT command required)
+    ```bash
+    echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat /testbed/loc.txt
+    ```
+
+    If the command fails (nonzero exit status), it will not submit.
+
+    <CRITICAL>
+    - You CANNOT continue working (reading, searching, editing) in any way on this task after submitting.
+    - Do NOT modify any source code files — you are only identifying locations, not fixing them.
+    - Do NOT run any tests or reproduction scripts that could modify the repository state.
+    - You may read files, search with grep/find, and explore the directory structure.
+    - The /testbed directory is your working directory.
+    </CRITICAL>
+    </instructions>
+  step_limit: 250
+  cost_limit: 3.0
+
+environment:
+  cwd: "/testbed"
+  timeout: 60
+  interpreter: ["bash", "-c"]
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: "off"
+    TQDM_DISABLE: "1"
+  environment_class: docker
+
+model:
+  observation_template: |
+    {% if output.exception_info -%}
+    <exception>{{output.exception_info}}</exception>
+    {% endif -%}
+    <returncode>{{output.returncode}}</returncode>
+    {% if output.output | length < 10000 -%}
+    <output>
+    {{ output.output -}}
+    </output>
+    {%- else -%}
+    <warning>
+    The output of your last command was too long.
+    Please try a different command that produces less output.
+    If you're looking at a file you can try use head, tail or sed to view a smaller number of lines selectively.
+    If you're using grep or find and it produced too much output, you can use a more selective search pattern.
+    If you really need to see something from the full command's output, you can redirect output to a file and then search in that file.
+    </warning>
+    {%- set elided_chars = output.output | length - 10000 -%}
+    <output_head>
+    {{ output.output[:5000] }}
+    </output_head>
+    <elided_chars>
+    {{ elided_chars }} characters elided
+    </elided_chars>
+    <output_tail>
+    {{ output.output[-5000:] }}
+    </output_tail>
+    {%- endif -%}
+  format_error_template: |
+    Tool call error:
+
+    <error>
+    {{error}}
+    </error>
+
+    Here is general guidance on how to submit correct toolcalls:
+
+    Every response needs to use the 'bash' tool at least once to execute commands.
+
+    Call the bash tool with your command as the argument:
+    - Tool: bash
+    - Arguments: {"command": "your_command_here"}
+
+    If you have completed your assignment, please consult the first message about how to
+    submit your solution (you will not be able to continue working on this task after that).
+  cost_tracking: "ignore_errors"

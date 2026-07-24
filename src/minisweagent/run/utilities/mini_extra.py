@@ -15,6 +15,9 @@ subcommands = [
     ("minisweagent.run.utilities.inspector", ["inspect", "i", "inspector"], "Run inspector (browse trajectories)"),
     ("minisweagent.run.benchmarks.swebench", ["swebench"], "Evaluate on SWE-bench (batch mode)"),
     ("minisweagent.run.benchmarks.swebench_single", ["swebench-single"], "Evaluate on SWE-bench (single instance)"),
+    ("minisweagent.run.benchmarks.locagent_benchmark", ["locagent", "locagent-benchmark"], "LocAgent: localization-only benchmark (produces LocAgent JSONL)"),
+    ("minisweagent.run.benchmarks.locagent_single", ["locagent-single"], "LocAgent: run single instance in localization mode"),
+    ("minisweagent.run.benchmarks.evaluate_locagent", ["evaluate-locagent", "eval-locagent"], "Evaluate LocAgent-format output with LocAgent metrics"),
 ]
 
 
