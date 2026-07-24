@@ -44,7 +44,7 @@ env:
   MSWEA_CONFIGURED: "true"
   LOCAGENT_DATASET_RELEASE_TAG: "dataset-locbench-v0.1"
   LOCAGENT_DATASET_ASSET: "locbench-python.jsonl"
-  DATASET_SPLIT: "test"
+  DATASET_SPLIT: "train"
 
 jobs:
   run-case:
