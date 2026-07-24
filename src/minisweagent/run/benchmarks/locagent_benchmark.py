@@ -106,7 +106,13 @@ def _extract_python_path(line: str) -> str | None:
     # Remove leading non-path content (e.g. line numbers or markers)
     match = re.search(r"([\w./-]+\.py)", line)
     if match:
-        return match.group(1)
+        path = match.group(1)
+        # Strip leading Docker container working dir prefixes (/app/, /testbed/)
+        for prefix in ("/app/", "/testbed/"):
+            if path.startswith(prefix):
+                path = path[len(prefix):]
+                break
+        return path
     return None
 
 
