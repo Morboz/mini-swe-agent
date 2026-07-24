@@ -1,0 +1,236 @@
+name: locbench-single-case
+
+# 手动触发：在 GitHub-hosted runner 上跑单个 LocBench case。
+# 复用 mini-swe-agent 的主循环和 DockerEnvironment，但 agent 的目标是
+# *定位*（locate）而非修复（fix）：agent 分析代码仓库，找出需要修改的
+# 文件/模块/函数，写入 /testbed/loc.txt 后用 COMPLETE_TASK_AND_SUBMIT
+# 机制提交。结果输出为 LocAgent 格式的 JSONL（loc_outputs.jsonl）。
+#
+# 运行前置：
+#   - 仓库 Secrets 里配置模型 API_KEY（如 DEEPSEEK_API_KEY）。
+#   - 数据集 jsonl 已通过 release 上传（见 DATASET_RELEASE_TAG / DATASET_ASSET）。
+#   - 数据集需包含 edit_functions 字段（ground truth 定位标签）。
+#   - （可选）LocAgent 的 evaluation/eval_metric.py 需可通过 release 下载。
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance_id:
+        description: "要跑的 instance ID（来自 locbench-*.jsonl 数据集）"
+        required: true
+        type: string
+      config_file:
+        description: "基础配置文件（locagent.yaml = 定位模式，只有 bash 工具）"
+        required: false
+        default: "locagent.yaml"
+        type: string
+      model_name:
+        description: "litellm 模型名"
+        required: false
+        default: "anthropic/claude-sonnet-4-5-20250929"
+        type: string
+      api_base:
+        description: "模型 endpoint"
+        required: false
+        default: "https://api.anthropic.com/v1"
+        type: string
+      skip_eval:
+        description: "跳过 evaluation 步骤（只跑 agent 不跑评测）"
+        required: false
+        default: "false"
+        type: boolean
+
+env:
+  MSWEA_CONFIGURED: "true"
+  LOCAGENT_DATASET_RELEASE_TAG: "dataset-locbench-v0.1"
+  LOCAGENT_DATASET_ASSET: "locbench-python.jsonl"
+  DATASET_SPLIT: "test"
+
+jobs:
+  run-case:
+    runs-on: self-hosted
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download dataset jsonl from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATASET_PATH="/opt/miniswe-ci/datasets/${LOCAGENT_DATASET_ASSET}"
+          if [ -f "${DATASET_PATH}" ]; then
+            echo "Dataset already exists: ${DATASET_PATH} ($(wc -l < "${DATASET_PATH}") lines), skipping download"
+          else
+            mkdir -p "$(dirname "${DATASET_PATH}")"
+            gh release download "${LOCAGENT_DATASET_RELEASE_TAG}" \
+              -R "${{ github.repository }}" \
+              -p "${LOCAGENT_DATASET_ASSET}" \
+              --dir "$(dirname "${DATASET_PATH}")"
+            echo "Downloaded dataset: ${DATASET_PATH} ($(wc -l < "${DATASET_PATH}") lines)"
+          fi
+          echo "DATASET_PATH=${DATASET_PATH}" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        run: command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Create venv
+        run: |
+          VENV="/opt/miniswe-ci/.venv"
+          if [ ! -d "${VENV}" ]; then
+            uv venv --python 3.11 "${VENV}"
+          fi
+          echo "VENV=${VENV}" >> "$GITHUB_ENV"
+          echo "${VENV}/bin" >> "$GITHUB_PATH"
+
+      - name: Install mini-swe-agent
+        run: uv pip install -e '.[full]'
+
+      - name: Write runtime model config
+        env:
+          MODEL_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MODEL_NAME: ${{ inputs.model_name }}
+          API_BASE: ${{ inputs.api_base }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          key = os.environ.get("MODEL_API_KEY", "").replace('"', '\\"')
+          model_name = os.environ["MODEL_NAME"]
+          api_base = os.environ["API_BASE"]
+          yaml_text = (
+              "model:\n"
+              f'  model_name: "{model_name}"\n'
+              "  model_kwargs:\n"
+              f'    api_base: "{api_base}"\n'
+              f'    api_key: "{key}"\n'
+          )
+          pathlib.Path("/tmp/runtime.yaml").write_text(yaml_text)
+          print(f"runtime config: model_name={model_name} api_base={api_base}")
+          PY
+
+      - name: Run single LocBench case
+        env:
+          INSTANCE_ID: ${{ inputs.instance_id }}
+        run: |
+          set -euo pipefail
+          OUTPUT_DIR="runs/${INSTANCE_ID}"
+          mkdir -p "$OUTPUT_DIR"
+
+          python src/minisweagent/run/benchmarks/locagent_benchmark.py \
+            -c "${{ inputs.config_file }}" \
+            -c "/tmp/runtime.yaml" \
+            -c "environment.pull_timeout=1800" \
+            --subset "$DATASET_PATH" \
+            --split "$DATASET_SPLIT" \
+            --filter "^${INSTANCE_ID}\$" \
+            --output "$OUTPUT_DIR" \
+            --workers 1
+
+      - name: Extract localization results
+        # 把 loc_outputs.jsonl 里的 found_files / found_modules / found_entities
+        # 抽成独立的 summary 文件，方便预览
+        env:
+          INSTANCE_ID: ${{ inputs.instance_id }}
+        run: |
+          python3 - "runs/${INSTANCE_ID}/loc_outputs.jsonl" "runs/${INSTANCE_ID}/loc_summary.json" <<'PY'
+          import json, sys
+          loc_path, out_path = sys.argv[1], sys.argv[2]
+          if not __import__("pathlib").Path(loc_path).exists():
+              print(f"::error::loc_outputs.jsonl not found at {loc_path}")
+              sys.exit(1)
+          with open(loc_path) as f:
+              records = [json.loads(line) for line in f if line.strip()]
+          if not records:
+              print("::error::没有定位结果")
+              sys.exit(1)
+          rec = records[0]
+          summary = {
+              "instance_id": rec["instance_id"],
+              "found_files": rec["found_files"],
+              "found_modules_count": len(rec["found_modules"]),
+              "found_entities_count": len(rec["found_entities"]),
+              "found_modules": rec["found_modules"],
+              "found_entities": rec["found_entities"],
+          }
+          json.dump(summary, open(out_path, "w"), indent=2)
+          print(f"instance={rec['instance_id']} files={rec['found_files']} entities={len(rec['found_entities'])} -> {out_path}")
+          PY
+
+      # ── Evaluation (需 LocAgent 的 eval_metric.py) ──────────────────────
+      - name: Clone LocAgent eval module
+        if: ${{ inputs.skip_eval != true }}
+        run: |
+          LOCAGENT_EVAL_DIR="/opt/miniswe-ci/LocAgent"
+          if [ -d "${LOCAGENT_EVAL_DIR}" ]; then
+            echo "LocAgent eval dir already exists, pulling latest..."
+            cd "${LOCAGENT_EVAL_DIR}" && git pull --ff-only || true
+          else
+            git clone "https://github.com/wanggen/LocAgent.git" "${LOCAGENT_EVAL_DIR}"
+          fi
+          echo "LOCAGENT_EVAL_DIR=${LOCAGENT_EVAL_DIR}" >> "$GITHUB_ENV"
+
+      - name: Install eval dependencies
+        if: ${{ inputs.skip_eval != true }}
+        run: |
+          uv pip install pandas torch tqdm datasets
+
+      - name: Run LocAgent evaluation
+        if: ${{ inputs.skip_eval != true }}
+        env:
+          INSTANCE_ID: ${{ inputs.instance_id }}
+        run: |
+          set -euo pipefail
+          OUTPUT_DIR="runs/${INSTANCE_ID}"
+          EVAL_OUTPUT_DIR="${OUTPUT_DIR}/eval"
+          mkdir -p "${EVAL_OUTPUT_DIR}"
+
+          python - <<'PY'
+          import os, sys, json, pathlib
+
+          # Add LocAgent to path
+          locagent_dir = os.environ.get("LOCAGENT_EVAL_DIR", "/opt/miniswe-ci/LocAgent")
+          sys.path.insert(0, locagent_dir)
+
+          from evaluation.eval_metric import evaluate_results
+
+          instance_id = os.environ["INSTANCE_ID"]
+          output_dir = pathlib.Path(os.environ["OUTPUT_DIR"])
+          eval_output_dir = output_dir / "eval"
+          loc_file = str(output_dir / "loc_outputs.jsonl")
+
+          level2key_dict = {
+              "file": "found_files",
+              "module": "found_modules",
+              "function": "found_entities",
+          }
+
+          result_df = evaluate_results(
+              loc_file,
+              level2key_dict,
+              dataset=loc_file,  # 本地 jsonl，只跑这一个 instance
+              split="train",
+              selected_list=[instance_id],
+              metrics=["acc", "ndcg", "precision", "recall", "map"],
+          )
+
+          # Save results
+          result_df.to_json(str(eval_output_dir / "eval_results.json"), orient="table", indent=2)
+
+          print("===== LocBench Evaluation Results =====")
+          print(result_df.to_string())
+          print("=======================================")
+          PY
+
+      # ── Upload ──────────────────────────────────────────────────────────
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: locbench-${{ inputs.instance_id }}-run${{ github.run_id }}
+          path: |
+            runs/${{ inputs.instance_id }}/
+          if-no-files-found: warn
+
+      - name: Cleanup runtime config
+        if: always()
+        run: rm -f /tmp/runtime.yaml
