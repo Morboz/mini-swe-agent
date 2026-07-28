@@ -144,3 +144,9 @@ model:
     If you have completed your assignment, please consult the first message about how to
     submit your solution (you will not be able to continue working on this task after that).
   cost_tracking: "ignore_errors"
+
+memory:
+  enabled: true
+  base_url: "http://localhost:8000"
+  timeout_seconds: 300
+  max_output_chars: 4000
