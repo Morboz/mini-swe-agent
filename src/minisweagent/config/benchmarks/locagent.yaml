@@ -172,6 +172,6 @@ memory:
   max_output_chars: 4000
 
 pycodegraph:
-  db_url: "postgresql+psycopg://admin:admin@localhost:5432/tocs"
+  db_url: ""
   src_root: "/app"
   timeout_seconds: 300
