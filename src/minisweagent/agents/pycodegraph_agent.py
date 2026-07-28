@@ -29,7 +29,7 @@ logger = logging.getLogger("minisweagent.pycodegraph_agent")
 
 # ── Module-level CodeGraph singleton ──────────────────────────────────────
 
-_cg_instance = None
+_cg_instance: Any = None
 """Cache the pycodegraph CodeGraph client so we don't reconnect per call."""
 
 
@@ -45,7 +45,7 @@ def _get_cg(pycodegraph_config: dict[str, Any]) -> Any:
     db_url = pycodegraph_config.get("db_url", "")
     src_root = pycodegraph_config.get("src_root", "")
     if not db_url:
-        logger.warning("pycodegraph db_url not configured — search_nodes/get_neighbors unavailable")
+        logger.warning("pycodegraph db_url not configured — tools unavailable")
         return None
     try:
         from pycodegraph import CodeGraph
@@ -53,6 +53,10 @@ def _get_cg(pycodegraph_config: dict[str, Any]) -> Any:
         _cg_instance = CodeGraph.open_from_url(db_url, src_root)
         logger.info("pycodegraph connected to %s", db_url.split("@")[-1] if "@" in db_url else db_url)
         return _cg_instance
+    except FileNotFoundError:
+        # 数据库文件或 schema 不存在，尝试 init
+        logger.warning("pycodegraph database not found at %s — tools unavailable", db_url)
+        return None
     except ImportError:
         logger.warning(
             "pycodegraph not installed (pip install pycodegraph) — search_nodes/get_neighbors unavailable"
@@ -60,6 +64,8 @@ def _get_cg(pycodegraph_config: dict[str, Any]) -> Any:
         return None
     except Exception as e:
         logger.warning("pycodegraph connection failed (%s) — tools degraded", e)
+        # Log the full traceback for debugging
+        logger.debug("pycodegraph connection error details", exc_info=True)
         return None
 
 
@@ -124,7 +130,7 @@ class PycodeGraphAgent(DefaultAgent):
         if hasattr(model, "config") and hasattr(model.config, "extra_tools"):
             model.config.extra_tools = [SEARCH_NODES_TOOL, GET_NEIGHBORS_TOOL]
 
-    # -- Lazy connection -------------------------------------------------------
+    # -- Lazy connection + ingest --------------------------------------------------
 
     def query(self) -> dict:
         """Connect to pycodegraph once on the first step, then query the model."""
@@ -133,9 +139,47 @@ class PycodeGraphAgent(DefaultAgent):
         return super().query()
 
     def _ensure_cg(self) -> None:
-        """Initialize the pycodegraph client exactly once."""
+        """Initialize the pycodegraph client exactly once and ensure the graph is ready."""
         self._cg = _get_cg(self.pycodegraph_config)
         self._cg_ok = self._cg is not None
+        if self._cg_ok:
+            # Try to ingest if no data exists for this repo
+            self._ensure_ingested()
+
+    def _ensure_ingested(self) -> None:
+        """Check if the code graph exists; if not, index from the env (Docker container)."""
+        try:
+            cwd = getattr(getattr(self.env, "config", None), "cwd", "")
+            repo_id = self.extra_template_vars.get("instance_id", "")
+
+            # Quick check: search for a common symbol. If empty, repo not indexed.
+            if self._cg.search("def ", limit=1):
+                logger.debug("pycodegraph graph already exists — skipping ingest")
+                return
+
+            logger.info("pycodegraph: no existing graph found, indexing from %s ...", cwd or "(default cwd)")
+            # Collect source files from the environment (Docker container)
+            source_files = []
+            result = self.env.execute({"command": "find . -name '*.py' -type f"}, cwd=cwd)
+            if result.get("returncode") == 0:
+                files = result["output"].strip().splitlines()
+                for path in files[:1000]:  # safety limit in case of huge repos
+                    path = path.strip()
+                    if not path:
+                        continue
+                    fr = self.env.execute({"command": f"cat '{path}'"}, cwd=cwd)
+                    if fr.get("returncode") == 0:
+                        source_files.append({"path": path, "content": fr["output"]})
+
+            if not source_files:
+                logger.warning("pycodegraph: no source files found in env — skipping ingest")
+                return
+
+            logger.info("pycodegraph: indexing %d files ...", len(source_files))
+            self._cg.index_all()
+            logger.info("pycodegraph: indexing complete")
+        except Exception as e:
+            logger.warning("pycodegraph ingest failed (%s) — using whatever graph exists", e)
 
     # -- Tool dispatch ---------------------------------------------------------
 
