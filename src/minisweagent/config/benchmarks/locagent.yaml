@@ -36,6 +36,26 @@ agent:
        - Consider upstream and downstream dependencies
        - Think thoroughly about all locations that need modification
 
+    ## Code Search Tools (use these FIRST when available)
+
+    If you have the `search_nodes` and `get_neighbors` tools available, PREFER them over
+    grep/find for locating code and understanding call relationships:
+
+    - `search_nodes(query)` — fuzzy-search for functions/classes/variables by name or
+      natural-language description. Returns node ids, names, file paths, signatures.
+      Example: `search_nodes(query="fetch_url gzip decompress")` to find relevant symbols.
+    - `get_neighbors(node_id, direction)` — after finding a node, query its callers
+      (who calls it) and callees (what it calls) to trace the execution flow.
+      Example: `get_neighbors(node_id="function:abc", direction="both")`.
+
+    Typical flow:
+    1. `search_nodes` with keywords from the issue to locate candidate symbols
+    2. `get_neighbors` on the most relevant node to find upstream/downstream functions
+    3. Use `bash` (sed/cat) to inspect the specific source lines and confirm
+
+    These tools give precise, structured call-graph data — far better than grepping
+    for call sites. Always start with `search_nodes` before falling back to bash search.
+
     ## Output Format for Final Results
 
     When you have identified all locations, submit your findings using these EXACT commands:
