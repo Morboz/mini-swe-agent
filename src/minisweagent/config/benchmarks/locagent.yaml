@@ -150,3 +150,8 @@ memory:
   base_url: "http://localhost:8000"
   timeout_seconds: 300
   max_output_chars: 4000
+
+pycodegraph:
+  db_url: "postgresql+psycopg://admin:admin@172.18.120.106:5432/ai_fwd"
+  src_root: "/app"
+  timeout_seconds: 30

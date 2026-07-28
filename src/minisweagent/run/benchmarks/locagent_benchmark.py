@@ -26,6 +26,7 @@ from rich.live import Live
 from minisweagent.agents import get_agent
 from minisweagent.agents.context_tool_agent import ContextToolAgent
 from minisweagent.agents.memory_bootstrap import MemoryBootstrapAgent
+from minisweagent.agents.pycodegraph_agent import PycodeGraphAgent
 from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.environments import get_environment
 from minisweagent.models import get_model
@@ -178,6 +179,20 @@ class LocAgentContextToolTracking(ContextToolAgent):
         return super().step()
 
 
+class LocAgentPycodeGraphTracking(PycodeGraphAgent):
+    """Wraps PycodeGraphAgent with progress reporting for LocAgent runs."""
+
+    def __init__(self, *args, progress_manager: RunBatchProgressManager | None = None, instance_id: str = "", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.progress_manager = progress_manager
+        self.instance_id = instance_id
+
+    def step(self) -> dict:
+        if self.progress_manager is not None:
+            self.progress_manager.update_instance_status(self.instance_id, f"Step {self.n_calls + 1:3d} (${self.cost:.2f})")
+        return super().step()
+
+
 # ── Process a single instance ──────────────────────────────────────────────
 
 
@@ -221,6 +236,15 @@ def process_instance(
                 progress_manager=progress_manager,
                 instance_id=instance_id,
                 memory=config.get("memory", {}),
+                **config.get("agent", {}),
+            )
+        elif agent_class_name == "pycodegraph":
+            agent = LocAgentPycodeGraphTracking(
+                model,
+                env,
+                progress_manager=progress_manager,
+                instance_id=instance_id,
+                pycodegraph=config.get("pycodegraph", {}),
                 **config.get("agent", {}),
             )
         else:

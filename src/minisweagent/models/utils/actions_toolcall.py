@@ -61,7 +61,65 @@ CONTEXT_SEARCH_TOOL = {
     },
 }
 
-KNOWN_TOOLS = {"bash", "context_search"}
+SEARCH_NODES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search_nodes",
+        "description": (
+            "搜索代码库中的函数、类、变量等节点。支持模糊/自然语言查询。"
+            "优先用此工具定位感兴趣的代码符号，再配合 get_neighbors 查调用上下游。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "搜索关键词，支持自然语言或部分符号名。"
+                        '例如 "gzip decompress urls.py" 或 "fetch_url" 或 "Request.open"。'
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "最多返回结果数，默认 10。",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+GET_NEIGHBORS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_neighbors",
+        "description": (
+            "查询指定函数/类的调用上下游（谁调用了我、我调用了谁）。"
+            "先通过 search_nodes 拿到 node_id 后再调用此工具。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "节点的 ID（来自 search_nodes 返回的 id 字段）。",
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["callers", "callees", "both"],
+                    "description": "查询方向: callers（谁调用了我）、callees（我调用了谁）、both（两者）。",
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "调用链深度，默认 1。深度越大返回信息越多。",
+                },
+            },
+            "required": ["node_id", "direction"],
+        },
+    },
+}
+
+KNOWN_TOOLS = {"bash", "context_search", "search_nodes", "get_neighbors"}
 
 
 def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> list[dict]:
@@ -97,6 +155,14 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
             elif tool_name == "context_search":
                 if not isinstance(args, dict) or "query" not in args:
                     error_msg += "Missing 'query' argument in context_search tool call."
+            elif tool_name == "search_nodes":
+                if not isinstance(args, dict) or "query" not in args:
+                    error_msg += "Missing 'query' argument in search_nodes tool call."
+            elif tool_name == "get_neighbors":
+                if not isinstance(args, dict) or "node_id" not in args or "direction" not in args:
+                    error_msg += "Missing 'node_id' or 'direction' argument in get_neighbors tool call."
+                elif args.get("direction") not in ("callers", "callees", "both"):
+                    error_msg += "Invalid 'direction' argument in get_neighbors tool call. Must be 'callers', 'callees', or 'both'."
 
         if error_msg:
             raise FormatError(
@@ -116,6 +182,15 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
             action["query"] = args["query"]
             if "budget" in args:
                 action["budget"] = args["budget"]
+        elif tool_name == "search_nodes":
+            action["query"] = args["query"]
+            if "limit" in args:
+                action["limit"] = int(args["limit"])
+        elif tool_name == "get_neighbors":
+            action["node_id"] = args["node_id"]
+            action["direction"] = args["direction"]
+            if "max_depth" in args:
+                action["max_depth"] = int(args["max_depth"])
         actions.append(action)
     return actions
 
