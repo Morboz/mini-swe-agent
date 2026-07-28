@@ -24,6 +24,9 @@ from minisweagent.models.utils.actions_toolcall import (
     SEARCH_NODES_TOOL,
 )
 
+logger = logging.getLogger("minisweagent.pycodegraph_agent")
+"""Use the minisweagent logger tree so warnings propagate to configured handlers."""
+
 # ── Module-level CodeGraph singleton ──────────────────────────────────────
 
 _cg_instance = None
@@ -42,21 +45,21 @@ def _get_cg(pycodegraph_config: dict[str, Any]) -> Any:
     db_url = pycodegraph_config.get("db_url", "")
     src_root = pycodegraph_config.get("src_root", "")
     if not db_url:
+        logger.warning("pycodegraph db_url not configured — search_nodes/get_neighbors unavailable")
         return None
     try:
         from pycodegraph import CodeGraph
 
         _cg_instance = CodeGraph.open_from_url(db_url, src_root)
+        logger.info("pycodegraph connected to %s", db_url.split("@")[-1] if "@" in db_url else db_url)
         return _cg_instance
     except ImportError:
-        logging.getLogger("pycodegraph_agent").warning(
-            "pycodegraph not installed — search_nodes/get_neighbors unavailable"
+        logger.warning(
+            "pycodegraph not installed (pip install pycodegraph) — search_nodes/get_neighbors unavailable"
         )
         return None
     except Exception as e:
-        logging.getLogger("pycodegraph_agent").warning(
-            "pycodegraph connection failed (%s) — tools degraded", e
-        )
+        logger.warning("pycodegraph connection failed (%s) — tools degraded", e)
         return None
 
 
@@ -115,7 +118,7 @@ class PycodeGraphAgent(DefaultAgent):
         self.pycodegraph_config = pycodegraph or {}
         self._cg = None
         self._cg_ok = False
-        self.logger = logging.getLogger("pycodegraph_agent")
+        self.logger = logger
 
         # Inject pycodegraph tools into the model's tool list.
         if hasattr(model, "config") and hasattr(model.config, "extra_tools"):
