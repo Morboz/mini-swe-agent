@@ -310,6 +310,25 @@ def process_instance(
 
         progress_manager.on_instance_end(instance_id, exit_status)
 
+        # Clean up Docker container + image to free disk for the next case
+        # (each case pulls a different ~1.5GB image; without this, 30 cases fill the disk)
+        try:
+            import subprocess
+            # Stop and remove any minisweagent containers
+            subprocess.run(
+                "docker ps -q --filter name=minisweagent | xargs -r docker rm -f",
+                shell=True, capture_output=True, timeout=30,
+            )
+            # Remove sweap-images that are no longer in use
+            subprocess.run(
+                "docker images --format '{{.Repository}}:{{.Tag}}' | grep sweap-images | "
+                "while read img; do docker rmi \"$img\" 2>/dev/null || true; done",
+                shell=True, capture_output=True, timeout=60,
+            )
+            logger.debug(f"Cleaned up Docker resources after {instance_id}")
+        except Exception as cleanup_err:
+            logger.debug(f"Docker cleanup skipped: {cleanup_err}")
+
 
 # ── CLI ────────────────────────────────────────────────────────────────────
 
