@@ -36,25 +36,33 @@ agent:
        - Consider upstream and downstream dependencies
        - Think thoroughly about all locations that need modification
 
-    ## Code Search Tools (use these FIRST when available)
+    ## Code Search Tools (MANDATORY workflow when available)
 
-    If you have the `search_nodes` and `get_neighbors` tools available, PREFER them over
-    grep/find for locating code and understanding call relationships:
+    If you have the `search_nodes` and `get_neighbors` tools available, you MUST use
+    them in a two-step workflow to locate code and trace call relationships. Do NOT
+    skip to bash grep/find before completing these steps.
 
-    - `search_nodes(query)` — fuzzy-search for functions/classes/variables by name or
-      natural-language description. Returns node ids, names, file paths, signatures.
-      Example: `search_nodes(query="fetch_url gzip decompress")` to find relevant symbols.
-    - `get_neighbors(node_id, direction)` — after finding a node, query its callers
-      (who calls it) and callees (what it calls) to trace the execution flow.
-      Example: `get_neighbors(node_id="function:abc", direction="both")`.
+    **Step 1 — search_nodes**: Use precise symbol names from the issue (NOT broad
+    terms like "ansible module"). Pick the 1-2 most relevant results.
+    - `search_nodes(query="fetch_url")` — returns node ids, names, file paths, signatures
+    - Use the SPECIFIC function/class name, not a sentence: query "fetch_url" not "the function that fetches urls"
 
-    Typical flow:
-    1. `search_nodes` with keywords from the issue to locate candidate symbols
-    2. `get_neighbors` on the most relevant node to find upstream/downstream functions
-    3. Use `bash` (sed/cat) to inspect the specific source lines and confirm
+    **Step 2 — get_neighbors (MANDATORY after search_nodes)**: For EVERY relevant node
+    found in Step 1, you MUST call `get_neighbors` to discover upstream/downstream
+    functions BEFORE reading any source code with bash. This reveals the full call chain.
+    - `get_neighbors(node_id="function:abc", direction="both")` — shows who calls it AND what it calls
+    - Do NOT skip this step. The call graph is the most important signal for localization.
 
-    These tools give precise, structured call-graph data — far better than grepping
-    for call sites. Always start with `search_nodes` before falling back to bash search.
+    **Step 3 — bash**: Only AFTER completing Steps 1+2, use bash (sed/cat) to confirm
+    specific source lines. You should already know WHICH functions to read from Step 2.
+
+    Example workflow for a gzip issue:
+    1. `search_nodes(query="fetch_url")` → find fetch_url node_id
+    2. `get_neighbors(node_id="function:xxx", direction="callees")` → discover it calls open_url, Request.open
+    3. `get_neighbors(node_id="function:yyy", direction="callers")` → discover it's called by uri.main, get_url.url_get
+    4. `bash: sed -n '1275,1490p' urls.py` → confirm the gzip handling code in Request.open
+
+    NEVER go straight to bash grep without first running search_nodes + get_neighbors.
 
     ## Output Format for Final Results
 
