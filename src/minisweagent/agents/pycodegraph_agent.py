@@ -21,6 +21,7 @@ from typing import Any
 from minisweagent.agents.default import AgentConfig, DefaultAgent
 from minisweagent.models.utils.actions_toolcall import (
     GET_NEIGHBORS_TOOL,
+    GET_NODE_DETAIL_TOOL,
     SEARCH_NODES_TOOL,
 )
 
@@ -128,7 +129,7 @@ class PycodeGraphAgent(DefaultAgent):
 
         # Inject pycodegraph tools into the model's tool list.
         if hasattr(model, "config") and hasattr(model.config, "extra_tools"):
-            model.config.extra_tools = [SEARCH_NODES_TOOL, GET_NEIGHBORS_TOOL]
+            model.config.extra_tools = [SEARCH_NODES_TOOL, GET_NEIGHBORS_TOOL, GET_NODE_DETAIL_TOOL]
 
     # -- Lazy connection + ingest --------------------------------------------------
 
@@ -204,6 +205,8 @@ class PycodeGraphAgent(DefaultAgent):
                 outputs.append(self._execute_search_nodes(action))
             elif tool == "get_neighbors":
                 outputs.append(self._execute_get_neighbors(action))
+            elif tool == "get_node_detail":
+                outputs.append(self._execute_get_node_detail(action))
             else:
                 outputs.append({
                     "output": f"Unknown tool: {tool}",
@@ -241,10 +244,10 @@ class PycodeGraphAgent(DefaultAgent):
             self.logger.warning("search_nodes failed: %s", e)
             return {"output": f"search_nodes failed: {e}", "returncode": 1}
 
-    # -- get_neighbors ---------------------------------------------------------
+    # -- get_neighbors (lightweight: only node id/name/kind/file) -------------
 
     def _execute_get_neighbors(self, action: dict) -> dict[str, Any]:
-        """Query call-graph upstream/downstream for a node."""
+        """Query call-graph upstream/downstream. Returns lightweight node identifiers only."""
         node_id = action.get("node_id", "")
         direction = action.get("direction", "both")
         max_depth = action.get("max_depth", 1)
@@ -261,29 +264,40 @@ class PycodeGraphAgent(DefaultAgent):
             if direction in ("callers", "both"):
                 callers = self._cg.get_callers_deep(node_id, max_depth=max_depth)
                 if callers:
-                    parts.append(
-                        f"=== callers ({len(callers)}) ===\n"
-                        + "\n".join(
-                            json.dumps(_serialize_neighbor(n, e), ensure_ascii=False)
-                            for n, e in callers
-                        )
-                    )
+                    parts.append(f"=== callers ({len(callers)}) ===")
+                    for n, e in callers:
+                        parts.append(f"  {n.id} | {n.name} | {n.file_path} | {e.kind} L{e.line}")
             if direction in ("callees", "both"):
                 callees = self._cg.get_callees_deep(node_id, max_depth=max_depth)
                 if callees:
-                    parts.append(
-                        f"=== callees ({len(callees)}) ===\n"
-                        + "\n".join(
-                            json.dumps(_serialize_neighbor(n, e), ensure_ascii=False)
-                            for n, e in callees
-                        )
-                    )
+                    parts.append(f"=== callees ({len(callees)}) ===")
+                    for n, e in callees:
+                        parts.append(f"  {n.id} | {n.name} | {n.file_path} | {e.kind} L{e.line}")
             if not parts:
                 return {
                     "output": f"get_neighbors: no neighbors found for {node_id!r}",
                     "returncode": 0,
                 }
-            return {"output": "\n\n".join(parts), "returncode": 0}
+            return {"output": "\n".join(parts), "returncode": 0}
         except Exception as e:
             self.logger.warning("get_neighbors failed: %s", e)
             return {"output": f"get_neighbors failed: {e}", "returncode": 1}
+
+    # -- get_node_detail -------------------------------------------------------
+
+    def _execute_get_node_detail(self, action: dict) -> dict[str, Any]:
+        """Get full details for a single node (signature, line, qualified_name)."""
+        node_id = action.get("node_id", "")
+        if not self._cg_ok:
+            return {
+                "output": "get_node_detail unavailable (pycodegraph not connected).",
+                "returncode": 1,
+            }
+        try:
+            node = self._cg.get_node_by_id(node_id)
+            if node is None:
+                return {"output": f"get_node_detail: node {node_id!r} not found", "returncode": 0}
+            return {"output": json.dumps(_serialize_node(node), ensure_ascii=False, indent=2), "returncode": 0}
+        except Exception as e:
+            self.logger.warning("get_node_detail failed: %s", e)
+            return {"output": f"get_node_detail failed: {e}", "returncode": 1}

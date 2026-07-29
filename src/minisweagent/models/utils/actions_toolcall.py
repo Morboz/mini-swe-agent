@@ -119,7 +119,28 @@ GET_NEIGHBORS_TOOL = {
     },
 }
 
-KNOWN_TOOLS = {"bash", "context_search", "search_nodes", "get_neighbors"}
+GET_NODE_DETAIL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_node_detail",
+        "description": (
+            "查看指定节点的详细信息（签名、行号、文件路径、限定名）。"
+            "get_neighbors 只返回轻量的 node 标识，需要查看具体签名时用此工具。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "节点的 ID（来自 search_nodes 或 get_neighbors 返回的 id 字段）。",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+}
+
+KNOWN_TOOLS = {"bash", "context_search", "search_nodes", "get_neighbors", "get_node_detail"}
 
 
 def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> list[dict]:
@@ -163,6 +184,9 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
                     error_msg += "Missing 'node_id' or 'direction' argument in get_neighbors tool call."
                 elif args.get("direction") not in ("callers", "callees", "both"):
                     error_msg += "Invalid 'direction' argument in get_neighbors tool call. Must be 'callers', 'callees', or 'both'."
+            elif tool_name == "get_node_detail":
+                if not isinstance(args, dict) or "node_id" not in args:
+                    error_msg += "Missing 'node_id' argument in get_node_detail tool call."
 
         if error_msg:
             raise FormatError(
@@ -191,6 +215,8 @@ def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> l
             action["direction"] = args["direction"]
             if "max_depth" in args:
                 action["max_depth"] = int(args["max_depth"])
+        elif tool_name == "get_node_detail":
+            action["node_id"] = args["node_id"]
         actions.append(action)
     return actions
 

@@ -51,7 +51,11 @@ agent:
     found in Step 1, you MUST call `get_neighbors` to discover upstream/downstream
     functions BEFORE reading any source code with bash. This reveals the full call chain.
     - `get_neighbors(node_id="function:abc", direction="both")` — shows who calls it AND what it calls
+    - Returns lightweight node identifiers only (id, name, file_path). Use `get_node_detail` to see signatures.
     - Do NOT skip this step. The call graph is the most important signal for localization.
+
+    **Step 2b — get_node_detail (optional)**: If you need a node's full signature or
+    qualified name, call `get_node_detail(node_id="function:abc")`.
 
     **Step 3 — bash**: Only AFTER completing Steps 1+2, use bash (sed/cat) to confirm
     specific source lines. You should already know WHICH functions to read from Step 2.
