@@ -73,19 +73,34 @@ agent:
     When you have identified all locations, submit your findings using these EXACT commands:
 
     Step 1: Write the output to loc.txt
-    Write your localization findings to a file called `/app/loc.txt` using this format:
+    Write your localization findings to a file called `/app/loc.txt` using this format.
+    **CRITICAL — function naming rules (follow these exactly)**:
+
+    - For **class methods**: write `function: ClassName.method_name`
+      ✅ CORRECT: `function: Request.open`
+      ❌ WRONG: `function: open` (missing class — will NOT match ground truth)
+      ❌ WRONG: writing `class: Request` and `function: open` on separate lines
+
+    - For **standalone functions**: write `function: func_name`
+      ✅ CORRECT: `function: fetch_url`
+
+    - `line:` entries are optional hints; they DO NOT count as locations
 
     ```
-    file1.py
-    line: 10
-    class: MyClass1
-    function: my_function1
+    lib/ansible/module_utils/urls.py
+    function: Request.open
+    function: open_url
+    function: fetch_url
 
-    file2.py
-    line: 76
-    function: MyClass2.my_function2
+    lib/ansible/modules/uri.py
+    function: main
 
-    file3.py
+    lib/ansible/modules/get_url.py
+    function: url_get
+    ```
+
+    IMPORTANT: Only list functions that need modification. Class names alone (`class: Request`)
+    without a method are NOT valid — always specify the method: `function: Request.open`.
     line: 24
     line: 156
     function: my_function3
